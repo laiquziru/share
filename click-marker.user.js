@@ -3,7 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      1.0
 // @description  点击元素后在其后方标记☑️，并显示边框渐变效果
-// @match        https://*.example.com/*
+// @match        https://*.b4u.qzz.io/*
 // @grant        none
 // ==/UserScript==
 
@@ -34,4 +34,5 @@
 
         el.addEventListener('animationend', () => el.classList.remove('click-border-anim'), { once: true });
     }, true);
+
 })();
