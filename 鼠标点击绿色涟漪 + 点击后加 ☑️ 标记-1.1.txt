@@ -1,0 +1,71 @@
+// ==UserScript==
+// @name         鼠标点击绿色涟漪 + 点击后加 ☑️ 标记
+// @namespace    http://tampermonkey.net/
+// @version      1.1
+// @description  点击网页出现绿色涟漪，并在点击的元素后添加绿色 ☑️ 已完成标记
+// @author       Grok
+// @match        *://*/*
+// @grant        none
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // 添加 CSS 样式：涟漪 + 绿色 ☑️ 标记
+    const style = document.createElement('style');
+    style.textContent = `
+        .green-ripple {
+            position: absolute;
+            border-radius: 50%;
+            background: rgba(0, 255, 0, 0.5); /* 绿色半透明涟漪 */
+            transform: scale(0);
+            animation: ripple 1s ease-out;
+            pointer-events: none;
+            width: 50px;
+            height: 50px;
+            margin-left: -25px;
+            margin-top: -25px;
+            z-index: 9999;
+        }
+        @keyframes ripple {
+            to {
+                transform: scale(4);
+                opacity: 0;
+            }
+        }
+        .green-checkmark {
+            color: green; /* 绿色 ☑️ */
+            font-size: 1.2em;
+            font-weight: bold;
+            margin-left: 8px;
+            display: inline-block;
+        }
+    `;
+    document.head.appendChild(style);
+
+    // 点击事件监听
+    document.addEventListener('click', function(e) {
+        // 1. 创建绿色涟漪
+        const ripple = document.createElement('div');
+        ripple.classList.add('green-ripple');
+        ripple.style.left = e.clientX + 'px';
+        ripple.style.top = e.clientY + 'px';
+        document.body.appendChild(ripple);
+
+        // 涟漪动画结束后移除
+        setTimeout(() => {
+            ripple.remove();
+        }, 1000);
+
+        // 2. 在被点击的元素后添加 ☑️ 标记
+        const target = e.target;
+
+        // 避免在 body 或 html 等大元素上添加，也避免重复添加
+        if (target && target !== document.body && target !== document.documentElement && !target.querySelector('.green-checkmark')) {
+            const checkmark = document.createElement('span');
+            checkmark.classList.add('green-checkmark');
+            checkmark.textContent = '☑️';  // 已完成标记
+            target.appendChild(checkmark);
+        }
+    });
+})();
