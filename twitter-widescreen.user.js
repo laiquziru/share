@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Twitter/X 宽屏优化
 // @namespace    http://tampermonkey.net/
-// @version      1.2
-// @description  隐藏右侧栏，搜索框悬浮到左下角，推文宽屏显示，文字紧凑排版，单图居中
+// @version      1.3
+// @description  隐藏左右侧栏，搜索框悬浮左下角，推文宽屏显示，文字紧凑排版，单图居中
 // @author       You
 // @match        https://twitter.com/*
 // @match        https://x.com/*
@@ -10,17 +10,32 @@
 // @match        https://mobile.x.com/*
 // @icon         https://abs.twimg.com/favicons/twitter.3.ico
 // @grant        GM_addStyle
+// @grant        GM_getValue
+// @grant        GM_setValue
 // @run-at       document-start
 // ==/UserScript==
 
 (function () {
     'use strict';
 
+    // 左侧栏状态
+    let sidebarVisible = GM_getValue('sidebarVisible', false);
+
     // 添加自定义样式
     const customStyles = `
         /* ========== 隐藏右侧栏 ========== */
         [data-testid="sidebarColumn"] {
             display: none !important;
+        }
+
+        /* ========== 隐藏左侧栏（默认） ========== */
+        header[role="banner"] {
+            display: none !important;
+        }
+
+        /* 左侧栏显示状态 */
+        body.tw-sidebar-visible header[role="banner"] {
+            display: flex !important;
         }
 
         /* ========== 核心：让主内容区域和推文真正变宽 ========== */
@@ -156,30 +171,48 @@
             justify-content: center !important;
         }
 
-        /* ========== 搜索框悬浮左下角 ========== */
-        .tw-floating-search {
+        /* ========== 悬浮工具栏 ========== */
+        .tw-floating-toolbar {
             position: fixed !important;
             bottom: 24px !important;
-            left: 90px !important;
+            left: 20px !important;
             z-index: 99999 !important;
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            gap: 12px !important;
+        }
+
+        .tw-toolbar-buttons {
             display: flex !important;
             align-items: center !important;
             gap: 10px !important;
         }
 
-        .tw-search-btn {
+        /* 通用按钮样式 */
+        .tw-toolbar-btn {
             width: 48px !important;
             height: 48px !important;
             border-radius: 50% !important;
-            background: rgb(29, 155, 240) !important;
             border: none !important;
             cursor: pointer !important;
             display: flex !important;
             align-items: center !important;
             justify-content: center !important;
             color: white !important;
-            box-shadow: 0 4px 12px rgba(29, 155, 240, 0.4) !important;
             transition: all 0.2s ease !important;
+        }
+
+        .tw-toolbar-btn svg {
+            width: 22px !important;
+            height: 22px !important;
+            fill: white !important;
+        }
+
+        /* 搜索按钮 */
+        .tw-search-btn {
+            background: rgb(29, 155, 240) !important;
+            box-shadow: 0 4px 12px rgba(29, 155, 240, 0.4) !important;
         }
 
         .tw-search-btn:hover {
@@ -188,12 +221,27 @@
             box-shadow: 0 6px 16px rgba(29, 155, 240, 0.5) !important;
         }
 
-        .tw-search-btn svg {
-            width: 22px !important;
-            height: 22px !important;
-            fill: white !important;
+        /* 侧边栏开关按钮 */
+        .tw-sidebar-btn {
+            background: #536471 !important;
+            box-shadow: 0 4px 12px rgba(83, 100, 113, 0.4) !important;
         }
 
+        .tw-sidebar-btn:hover {
+            background: #6b7d8a !important;
+            transform: scale(1.08) !important;
+        }
+
+        .tw-sidebar-btn.active {
+            background: #00ba7c !important;
+            box-shadow: 0 4px 12px rgba(0, 186, 124, 0.4) !important;
+        }
+
+        .tw-sidebar-btn.active:hover {
+            background: #00a06b !important;
+        }
+
+        /* 搜索输入框 */
         .tw-search-input-box {
             display: none;
             background: #16181c !important;
@@ -239,31 +287,68 @@
     // 注入样式
     GM_addStyle(customStyles);
 
-    // 创建悬浮搜索框
-    function createFloatingSearch() {
-        if (document.querySelector('.tw-floating-search')) {
+    // 更新侧边栏显示状态
+    function updateSidebarState() {
+        if (sidebarVisible) {
+            document.body.classList.add('tw-sidebar-visible');
+        } else {
+            document.body.classList.remove('tw-sidebar-visible');
+        }
+    }
+
+    // 创建悬浮工具栏
+    function createFloatingToolbar() {
+        if (document.querySelector('.tw-floating-toolbar')) {
             return;
         }
 
         const container = document.createElement('div');
-        container.className = 'tw-floating-search';
+        container.className = 'tw-floating-toolbar';
+
+        // 菜单图标 SVG
+        const menuIcon = `
+            <svg viewBox="0 0 24 24">
+                <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/>
+            </svg>
+        `;
+
+        // 搜索图标 SVG
+        const searchIcon = `
+            <svg viewBox="0 0 24 24">
+                <path d="M10.25 3.75c-3.59 0-6.5 2.91-6.5 6.5s2.91 6.5 6.5 6.5c1.795 0 3.419-.726 4.596-1.904 1.178-1.177 1.904-2.801 1.904-4.596 0-3.59-2.91-6.5-6.5-6.5zm-8.5 6.5c0-4.694 3.806-8.5 8.5-8.5s8.5 3.806 8.5 8.5c0 1.986-.682 3.815-1.824 5.262l4.781 4.781-1.414 1.414-4.781-4.781c-1.447 1.142-3.276 1.824-5.262 1.824-4.694 0-8.5-3.806-8.5-8.5z"/>
+            </svg>
+        `;
 
         container.innerHTML = `
-            <button class="tw-search-btn" title="搜索 Twitter">
-                <svg viewBox="0 0 24 24">
-                    <path d="M10.25 3.75c-3.59 0-6.5 2.91-6.5 6.5s2.91 6.5 6.5 6.5c1.795 0 3.419-.726 4.596-1.904 1.178-1.177 1.904-2.801 1.904-4.596 0-3.59-2.91-6.5-6.5-6.5zm-8.5 6.5c0-4.694 3.806-8.5 8.5-8.5s8.5 3.806 8.5 8.5c0 1.986-.682 3.815-1.824 5.262l4.781 4.781-1.414 1.414-4.781-4.781c-1.447 1.142-3.276 1.824-5.262 1.824-4.694 0-8.5-3.806-8.5-8.5z"/>
-                </svg>
-            </button>
+            <div class="tw-toolbar-buttons">
+                <button class="tw-toolbar-btn tw-sidebar-btn ${sidebarVisible ? 'active' : ''}" title="显示/隐藏左侧栏">
+                    ${menuIcon}
+                </button>
+                <button class="tw-toolbar-btn tw-search-btn" title="搜索 Twitter">
+                    ${searchIcon}
+                </button>
+            </div>
             <div class="tw-search-input-box">
                 <input type="text" placeholder="搜索 Twitter...">
                 <button class="tw-search-submit">搜索</button>
             </div>
         `;
 
+        const sidebarBtn = container.querySelector('.tw-sidebar-btn');
         const searchBtn = container.querySelector('.tw-search-btn');
         const inputBox = container.querySelector('.tw-search-input-box');
         const searchInput = container.querySelector('input');
         const submitBtn = container.querySelector('.tw-search-submit');
+
+        // 点击侧边栏按钮切换显示
+        sidebarBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            sidebarVisible = !sidebarVisible;
+            GM_setValue('sidebarVisible', sidebarVisible);
+            updateSidebarState();
+            sidebarBtn.classList.toggle('active', sidebarVisible);
+            console.log('📌 左侧栏:', sidebarVisible ? '显示' : '隐藏');
+        });
 
         // 点击搜索按钮切换输入框
         searchBtn.addEventListener('click', (e) => {
@@ -304,21 +389,19 @@
             e.stopPropagation();
         });
 
-        // 点击外部关闭
+        // 点击外部关闭搜索框
         document.addEventListener('click', () => {
             inputBox.classList.remove('active');
         });
 
         document.body.appendChild(container);
-        console.log('✅ 悬浮搜索框已创建');
+        console.log('✅ 悬浮工具栏已创建');
     }
 
     // 强制覆盖内联样式
     function forceWideScreen() {
-        // 查找所有有 max-width 内联样式的元素
         const primaryColumn = document.querySelector('[data-testid="primaryColumn"]');
         if (primaryColumn) {
-            // 移除可能的内联样式限制
             const allElements = primaryColumn.querySelectorAll('*');
             allElements.forEach(el => {
                 if (el.style.maxWidth && el.style.maxWidth !== 'none') {
@@ -330,7 +413,8 @@
 
     // 初始化
     function init() {
-        createFloatingSearch();
+        updateSidebarState();
+        createFloatingToolbar();
         forceWideScreen();
     }
 
@@ -343,9 +427,10 @@
 
     // 监听 DOM 变化
     const observer = new MutationObserver(() => {
-        if (!document.querySelector('.tw-floating-search')) {
-            createFloatingSearch();
+        if (!document.querySelector('.tw-floating-toolbar')) {
+            createFloatingToolbar();
         }
+        updateSidebarState();
         forceWideScreen();
     });
 
@@ -363,5 +448,5 @@
     setTimeout(init, 2000);
     setTimeout(init, 4000);
 
-    console.log('🐦 Twitter/X 宽屏优化脚本 v1.1 已加载');
+    console.log('🐦 Twitter/X 宽屏优化脚本 v1.3 已加载');
 })();
