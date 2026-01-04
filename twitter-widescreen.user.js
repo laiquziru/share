@@ -40,15 +40,14 @@
 
         /* ========== 左侧栏隐藏时，内容居中 ========== */
         
-        /* 整体容器居中 - 默认状态（左侧栏隐藏） */
+        /* main 是 column 布局，用 align-items 控制水平方向 */
         body:not(.tw-sidebar-visible) main[role="main"] {
             width: 100% !important;
             max-width: 100% !important;
-            margin: 0 auto !important;
-            display: flex !important;
-            justify-content: center !important;
+            align-items: center !important;
         }
 
+        /* 确保内部容器也居中 */
         body:not(.tw-sidebar-visible) main[role="main"] > div {
             width: 100% !important;
             max-width: 100% !important;
@@ -61,10 +60,15 @@
             justify-content: center !important;
         }
 
+        /* primaryColumn 居中 */
+        body:not(.tw-sidebar-visible) [data-testid="primaryColumn"] {
+            margin: 0 auto !important;
+            float: none !important;
+        }
+
         /* 当左侧栏显示时，保持原始布局 */
         body.tw-sidebar-visible main[role="main"] {
-            margin: 0 !important;
-            justify-content: flex-start !important;
+            align-items: flex-start !important;
         }
 
         body.tw-sidebar-visible main[role="main"] > div {
@@ -73,6 +77,10 @@
 
         body.tw-sidebar-visible main[role="main"] > div > div {
             justify-content: flex-start !important;
+        }
+
+        body.tw-sidebar-visible [data-testid="primaryColumn"] {
+            margin: 0 !important;
         }
 
         /* ========== 核心：让主内容区域和推文真正变宽 ========== */
