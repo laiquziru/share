@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Twitter/X 宽屏优化
 // @namespace    http://tampermonkey.net/
-// @version      1.1
-// @description  隐藏右侧栏，搜索框悬浮到左下角，推文内容宽屏显示
+// @version      1.2
+// @description  隐藏右侧栏，搜索框悬浮到左下角，推文宽屏显示，文字紧凑排版，单图居中
 // @author       You
 // @match        https://twitter.com/*
 // @match        https://x.com/*
@@ -93,6 +93,67 @@
             [data-testid="primaryColumn"] {
                 max-width: 1100px !important;
             }
+        }
+
+        /* ========== 文字排版优化 ========== */
+        
+        /* 推文文字占满宽度再换行 */
+        [data-testid="tweetText"] {
+            word-break: break-word !important;
+            overflow-wrap: break-word !important;
+            white-space: normal !important;
+            width: 100% !important;
+        }
+
+        [data-testid="tweetText"] span {
+            word-break: break-word !important;
+            overflow-wrap: break-word !important;
+            white-space: normal !important;
+        }
+
+        /* 行距缩小 */
+        [data-testid="tweetText"] {
+            line-height: 1.4 !important;
+        }
+
+        [data-testid="tweetText"] span {
+            line-height: 1.4 !important;
+        }
+
+        /* 段落间距缩小 */
+        [data-testid="tweetText"] > span {
+            display: inline !important;
+        }
+
+        /* ========== 单张图片居中 ========== */
+        
+        /* 图片容器 - 只有一张图片时居中 */
+        [data-testid="tweetPhoto"] {
+            display: flex !important;
+            justify-content: center !important;
+        }
+
+        /* 单张图片样式 */
+        article [data-testid="tweetPhoto"]:only-child {
+            justify-content: center !important;
+        }
+
+        /* 图片网格容器居中 */
+        [aria-label*="图片"] {
+            display: flex !important;
+            justify-content: center !important;
+        }
+
+        /* 媒体容器居中 */
+        article div[aria-labelledby] > div > div {
+            display: flex !important;
+            justify-content: center !important;
+        }
+
+        /* 确保单图居中显示 */
+        article [data-testid="card.wrapper"] {
+            display: flex !important;
+            justify-content: center !important;
         }
 
         /* ========== 搜索框悬浮左下角 ========== */
