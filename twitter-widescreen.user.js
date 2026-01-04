@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitter/X 宽屏优化
 // @namespace    http://tampermonkey.net/
-// @version      1.3
+// @version      1.4
 // @description  隐藏左右侧栏，搜索框悬浮左下角，推文宽屏显示，文字紧凑排版，单图居中
 // @author       You
 // @match        https://twitter.com/*
@@ -36,6 +36,21 @@
         /* 左侧栏显示状态 */
         body.tw-sidebar-visible header[role="banner"] {
             display: flex !important;
+        }
+
+        /* ========== 左侧栏隐藏时，内容居中 ========== */
+        
+        /* 主容器居中 */
+        main[role="main"] {
+            margin: 0 auto !important;
+            display: flex !important;
+            justify-content: center !important;
+        }
+
+        /* 当左侧栏显示时，恢复原始布局 */
+        body.tw-sidebar-visible main[role="main"] {
+            margin: 0 !important;
+            justify-content: flex-start !important;
         }
 
         /* ========== 核心：让主内容区域和推文真正变宽 ========== */
