@@ -40,16 +40,38 @@
 
         /* ========== 左侧栏隐藏时，内容居中 ========== */
         
-        /* 主容器居中 */
-        main[role="main"] {
+        /* 整体容器居中 - 默认状态（左侧栏隐藏） */
+        body:not(.tw-sidebar-visible) main[role="main"] {
+            width: 100% !important;
+            max-width: 100% !important;
             margin: 0 auto !important;
             display: flex !important;
             justify-content: center !important;
         }
 
-        /* 当左侧栏显示时，恢复原始布局 */
+        body:not(.tw-sidebar-visible) main[role="main"] > div {
+            width: 100% !important;
+            max-width: 100% !important;
+            display: flex !important;
+            justify-content: center !important;
+        }
+
+        body:not(.tw-sidebar-visible) main[role="main"] > div > div {
+            display: flex !important;
+            justify-content: center !important;
+        }
+
+        /* 当左侧栏显示时，保持原始布局 */
         body.tw-sidebar-visible main[role="main"] {
             margin: 0 !important;
+            justify-content: flex-start !important;
+        }
+
+        body.tw-sidebar-visible main[role="main"] > div {
+            justify-content: flex-start !important;
+        }
+
+        body.tw-sidebar-visible main[role="main"] > div > div {
             justify-content: flex-start !important;
         }
 
