@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Twitter/X 宽屏优化
 // @namespace    http://tampermonkey.net/
-// @version      1.4
-// @description  隐藏左右侧栏，搜索框悬浮左下角，推文宽屏显示，文字紧凑排版，单图居中
+// @version      2.1
+// @description  隐藏左右侧栏，搜索框悬浮左下角，推文宽屏显示，文字紧凑排版，单图居中，自定义关键词屏蔽，自动展开长文
 // @author       You
 // @match        https://twitter.com/*
 // @match        https://x.com/*
@@ -20,6 +20,8 @@
 
     // 左侧栏状态
     let sidebarVisible = GM_getValue('sidebarVisible', false);
+    // 屏蔽词列表
+    let blockedKeywords = GM_getValue('blockedKeywords', []);
 
     // 添加自定义样式
     const customStyles = `
@@ -155,28 +157,22 @@
             }
         }
 
-        /* ========== 文字排版优化 ========== */
+        /* ========== 文字排版优化：居中和紧凑 ========== */
         
-        /* 推文文字占满宽度再换行 */
+        /* 推文文字占满宽度再换行，不满一行居中 */
         [data-testid="tweetText"] {
             word-break: break-word !important;
             overflow-wrap: break-word !important;
             white-space: normal !important;
             width: 100% !important;
+            text-align: center !important; /* 核心：让短文本居中 */
+            line-height: 1.4 !important;
         }
 
         [data-testid="tweetText"] span {
             word-break: break-word !important;
             overflow-wrap: break-word !important;
             white-space: normal !important;
-        }
-
-        /* 行距缩小 */
-        [data-testid="tweetText"] {
-            line-height: 1.4 !important;
-        }
-
-        [data-testid="tweetText"] span {
             line-height: 1.4 !important;
         }
 
@@ -185,35 +181,40 @@
             display: inline !important;
         }
 
-        /* ========== 单张图片居中 ========== */
+        /* ========== 图片居中增强 (CSS部分) ========== */
         
-        /* 图片容器 - 只有一张图片时居中 */
+        /* 强制图片容器宽度 100% 并 Flex 居中 */
         [data-testid="tweetPhoto"] {
             display: flex !important;
             justify-content: center !important;
+            align-items: center !important;
+            width: 100% !important;
+            /* 关键恢复：不要强制 max-width 100%，让它自然撑开，只是父级居中 */
+            /* max-width: 100% !important; */
+            margin: 0 auto !important;
         }
 
-        /* 单张图片样式 */
-        article [data-testid="tweetPhoto"]:only-child {
-            justify-content: center !important;
+        /* 图片父级的一系列容器修正 */
+        /* 不要过于激进地修改所有 css-1dbjc4n 容器，这会导致塌陷 */
+        /* 仅针对已知包裹层 */
+        
+        /* 针对图片内的 img，防止 absolute 定位导致的问题 */
+        /* Twitter 的图片通常是 absolute 定位在 padding-bottom 撑开的容器里 
+           我们不能简单地改为 static，否则高度会变为 0
+        */
+        
+        /* 尝试让最外层的 tweetPhoto 容器居中 */
+        div[aria-labelledby] > div[class*="css-1dbjc4n"] {
+            /* 这种宽泛选择器可能导致问题，先注释掉 */
+            /* display: flex !important; */
+            /* justify-content: center !important; */
         }
 
-        /* 图片网格容器居中 */
-        [aria-label*="图片"] {
-            display: flex !important;
-            justify-content: center !important;
-        }
-
-        /* 媒体容器居中 */
-        article div[aria-labelledby] > div > div {
-            display: flex !important;
-            justify-content: center !important;
-        }
-
-        /* 确保单图居中显示 */
-        article [data-testid="card.wrapper"] {
-            display: flex !important;
-            justify-content: center !important;
+        /* card wrapper (如果有外链卡片) */
+        [data-testid="card.wrapper"] {
+            margin: 0 auto !important;
+            /* display: flex !important; */
+            /* justify-content: center !important; */
         }
 
         /* ========== 悬浮工具栏 ========== */
@@ -263,7 +264,17 @@
         .tw-search-btn:hover {
             background: rgb(26, 140, 216) !important;
             transform: scale(1.08) !important;
-            box-shadow: 0 6px 16px rgba(29, 155, 240, 0.5) !important;
+        }
+
+        /* 屏蔽按钮 */
+        .tw-filter-btn {
+            background: #f91880 !important;
+            box-shadow: 0 4px 12px rgba(249, 24, 128, 0.4) !important;
+        }
+
+        .tw-filter-btn:hover {
+            background: #d71771 !important;
+            transform: scale(1.08) !important;
         }
 
         /* 侧边栏开关按钮 */
@@ -286,14 +297,32 @@
             background: #00a06b !important;
         }
 
-        /* 搜索输入框 */
-        .tw-search-input-box {
+        /* 浮窗容器通用样式 */
+        .tw-tool-panel {
             display: none;
             background: #16181c !important;
-            border-radius: 25px !important;
+            border-radius: 16px !important;
+            padding: 16px !important;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5) !important;
+            width: 320px !important;
+            color: #e7e9ea !important;
+            border: 1px solid #333639 !important;
+        }
+
+        .tw-tool-panel.active {
+            display: block !important;
+        }
+
+        /* 搜索输入框 */
+        .tw-search-input-box {
             padding: 0 !important;
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4) !important;
             overflow: hidden !important;
+            border-radius: 25px !important;
+            display: none;
+            flex-direction: row !important;
+            align-items: center !important;
+            background: #16181c !important;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4) !important;
         }
 
         .tw-search-input-box.active {
@@ -301,8 +330,8 @@
         }
 
         .tw-search-input-box input {
-            width: 280px !important;
-            padding: 14px 20px !important;
+            width: 200px !important;
+            padding: 12px 16px !important;
             border: none !important;
             background: transparent !important;
             color: #e7e9ea !important;
@@ -310,22 +339,80 @@
             outline: none !important;
         }
 
-        .tw-search-input-box input::placeholder {
-            color: #71767b !important;
-        }
-
         .tw-search-submit {
-            padding: 14px 18px !important;
+            padding: 12px 16px !important;
             background: transparent !important;
             border: none !important;
             cursor: pointer !important;
             color: rgb(29, 155, 240) !important;
             font-weight: bold !important;
-            transition: background 0.2s !important;
         }
 
-        .tw-search-submit:hover {
-            background: rgba(29, 155, 240, 0.1) !important;
+        /* 过滤管理面板 */
+        .tw-filter-panel h3 {
+            margin: 0 0 12px 0 !important;
+            font-size: 16px !important;
+            color: #fff !important;
+        }
+
+        .tw-filter-input-wrapper {
+            display: flex !important;
+            gap: 8px !important;
+            margin-bottom: 12px !important;
+        }
+
+        .tw-filter-input-wrapper input {
+            flex-grow: 1 !important;
+            background: #000 !important;
+            border: 1px solid #333639 !important;
+            border-radius: 8px !important;
+            padding: 8px 12px !important;
+            color: #fff !important;
+            outline: none !important;
+        }
+
+        .tw-filter-input-wrapper input:focus {
+            border-color: rgb(29, 155, 240) !important;
+        }
+
+        .tw-filter-add-btn {
+            background: rgb(29, 155, 240) !important;
+            color: #fff !important;
+            border: none !important;
+            padding: 0 16px !important;
+            border-radius: 8px !important;
+            cursor: pointer !important;
+            font-weight: bold !important;
+        }
+
+        .tw-keyword-list {
+            max-height: 200px !important;
+            overflow-y: auto !important;
+            display: flex !important;
+            flex-wrap: wrap !important;
+            gap: 8px !important;
+        }
+
+        .tw-keyword-tag {
+            background: #2f3336 !important;
+            color: #e7e9ea !important;
+            padding: 4px 10px !important;
+            border-radius: 16px !important;
+            font-size: 13px !important;
+            display: flex !important;
+            align-items: center !important;
+            gap: 6px !important;
+        }
+
+        .tw-keyword-tag .remove-btn {
+            cursor: pointer !important;
+            color: #71767b !important;
+            font-weight: bold !important;
+            font-size: 14px !important;
+        }
+
+        .tw-keyword-tag .remove-btn:hover {
+            color: #f91880 !important;
         }
     `;
 
@@ -339,6 +426,101 @@
         } else {
             document.body.classList.remove('tw-sidebar-visible');
         }
+    }
+
+    // 还原所有已隐藏的推文
+    function resetHiddenTweets() {
+        const hiddenTweets = document.querySelectorAll('[data-testid="cellInnerDiv"][style*="display: none"]');
+        hiddenTweets.forEach(el => {
+            el.style.display = '';
+        });
+        const hiddenArticles = document.querySelectorAll('article[data-testid="tweet"][style*="display: none"]');
+        hiddenArticles.forEach(el => {
+            el.style.display = '';
+        });
+    }
+
+    // 关键词过滤逻辑
+    function filterTweets() {
+        if (blockedKeywords.length === 0) return;
+
+        const tweets = document.querySelectorAll('article[data-testid="tweet"]');
+        tweets.forEach(tweet => {
+            const tweetText = tweet.innerText;
+            if (tweetText) {
+                const hasKeyword = blockedKeywords.some(keyword =>
+                    tweetText.toLowerCase().includes(keyword.toLowerCase())
+                );
+
+                if (hasKeyword) {
+                    const container = tweet.closest('[data-testid="cellInnerDiv"]');
+                    if (container) {
+                        container.style.display = 'none';
+                    } else {
+                        tweet.style.display = 'none';
+                    }
+                }
+            }
+        });
+    }
+
+    // 自动展开长文功能
+    function autoExpandTweets() {
+        const showMoreButtons = document.querySelectorAll('[data-testid="tweet-text-show-more-link"]');
+
+        showMoreButtons.forEach(btn => {
+            if (!btn.dataset.clicked) {
+                // 如果是 <a> 标签且为跳转链接（href 不是 # 且不为空），则不要点击
+                if (btn.tagName === 'A') {
+                    const href = btn.getAttribute('href');
+                    if (href && href.length > 1 && href !== '#') {
+                        return;
+                    }
+                }
+
+                btn.click();
+                btn.dataset.clicked = "true";
+                btn.style.display = 'none';
+            }
+        });
+    }
+
+    // 修复图片居中逻辑（温和版）
+    function forceCenterImages() {
+        // 只处理最外层的图片容器，避免深入修改破坏布局
+        const photos = document.querySelectorAll('[data-testid="tweetPhoto"]');
+
+        photos.forEach(photo => {
+            // 设置 photo 容器自身居中
+            if (photo.style.margin !== '0px auto') {
+                photo.style.setProperty('margin', '0 auto', 'important');
+            }
+            // 确保它是 block 或 flex 以响应 auto margin
+            /*
+            const display = window.getComputedStyle(photo).display;
+            if (display === 'inline' || display === 'inline-block') {
+                 photo.style.setProperty('display', 'block', 'important');
+            }
+            */
+
+            // 尝试处理父容器，但不强制修改宽高
+            const parent = photo.parentElement;
+            if (parent) {
+                // 检查父容器是否有固定的宽度且靠左
+                // 很多时候是这个父容器导致的
+                // 我们不修改它的 display 属性，只修改 margin
+                parent.style.setProperty('margin-left', 'auto', 'important');
+                parent.style.setProperty('margin-right', 'auto', 'important');
+
+                // 只有当父容器宽度明显小于内容区时，才尝试拉伸（这比较危险，先不拉伸）
+            }
+        });
+
+        // 针对卡片（card.wrapper）
+        const cards = document.querySelectorAll('[data-testid="card.wrapper"]');
+        cards.forEach(card => {
+            card.style.setProperty('margin', '0 auto', 'important');
+        });
     }
 
     // 创建悬浮工具栏
@@ -364,6 +546,13 @@
             </svg>
         `;
 
+        // 过滤图标 SVG
+        const filterIcon = `
+            <svg viewBox="0 0 24 24">
+                <path d="M6 13h12v-2H6v2zm-2 5h16v-2H4v2zM1 6v2h22V6H1z"/>
+            </svg>
+        `;
+
         container.innerHTML = `
             <div class="tw-toolbar-buttons">
                 <button class="tw-toolbar-btn tw-sidebar-btn ${sidebarVisible ? 'active' : ''}" title="显示/隐藏左侧栏">
@@ -372,18 +561,66 @@
                 <button class="tw-toolbar-btn tw-search-btn" title="搜索 Twitter">
                     ${searchIcon}
                 </button>
+                <button class="tw-toolbar-btn tw-filter-btn" title="关键词屏蔽设置">
+                    ${filterIcon}
+                </button>
             </div>
-            <div class="tw-search-input-box">
+            
+            <div class="tw-tool-panel tw-search-input-box">
                 <input type="text" placeholder="搜索 Twitter...">
                 <button class="tw-search-submit">搜索</button>
+            </div>
+
+            <div class="tw-tool-panel tw-filter-panel">
+                <h3>屏蔽关键词管理</h3>
+                <div class="tw-filter-input-wrapper">
+                    <input type="text" placeholder="添加关键词..." id="tw-keyword-input">
+                    <button class="tw-filter-add-btn">添加</button>
+                </div>
+                <div class="tw-keyword-list"></div>
             </div>
         `;
 
         const sidebarBtn = container.querySelector('.tw-sidebar-btn');
         const searchBtn = container.querySelector('.tw-search-btn');
-        const inputBox = container.querySelector('.tw-search-input-box');
-        const searchInput = container.querySelector('input');
-        const submitBtn = container.querySelector('.tw-search-submit');
+        const filterBtn = container.querySelector('.tw-filter-btn');
+
+        const searchPanel = container.querySelector('.tw-search-input-box');
+        const filterPanel = container.querySelector('.tw-filter-panel');
+
+        const searchInput = container.querySelector('.tw-search-input-box input');
+        const keywordInput = container.querySelector('#tw-keyword-input');
+        const addKeywordBtn = container.querySelector('.tw-filter-add-btn');
+        const keywordListContainer = container.querySelector('.tw-keyword-list');
+
+        // 更新关键词列表 UI
+        function renderKeywords() {
+            keywordListContainer.innerHTML = '';
+            blockedKeywords.forEach((kw, index) => {
+                const tag = document.createElement('div');
+                tag.className = 'tw-keyword-tag';
+                tag.innerHTML = `
+                    <span>${kw}</span>
+                    <span class="remove-btn" data-index="${index}">×</span>
+                `;
+                keywordListContainer.appendChild(tag);
+            });
+
+            // 绑定删除事件
+            keywordListContainer.querySelectorAll('.remove-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const idx = parseInt(e.target.dataset.index);
+                    blockedKeywords.splice(idx, 1);
+                    GM_setValue('blockedKeywords', blockedKeywords);
+                    renderKeywords();
+                    resetHiddenTweets();
+                    filterTweets();
+                });
+            });
+        }
+
+        // 初始渲染
+        renderKeywords();
 
         // 点击侧边栏按钮切换显示
         sidebarBtn.addEventListener('click', (e) => {
@@ -392,15 +629,49 @@
             GM_setValue('sidebarVisible', sidebarVisible);
             updateSidebarState();
             sidebarBtn.classList.toggle('active', sidebarVisible);
-            console.log('📌 左侧栏:', sidebarVisible ? '显示' : '隐藏');
         });
 
-        // 点击搜索按钮切换输入框
+        // 切换搜索面板
         searchBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            inputBox.classList.toggle('active');
-            if (inputBox.classList.contains('active')) {
+            filterPanel.classList.remove('active');
+            searchPanel.classList.toggle('active');
+            if (searchPanel.classList.contains('active')) {
                 setTimeout(() => searchInput.focus(), 50);
+            }
+        });
+
+        // 切换过滤面板
+        filterBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            searchPanel.classList.remove('active');
+            filterPanel.classList.toggle('active');
+            if (filterPanel.classList.contains('active')) {
+                setTimeout(() => keywordInput.focus(), 50);
+            }
+        });
+
+        // 添加关键词逻辑
+        function addKeyword() {
+            const val = keywordInput.value.trim();
+            if (val && !blockedKeywords.includes(val)) {
+                blockedKeywords.push(val);
+                GM_setValue('blockedKeywords', blockedKeywords);
+                renderKeywords();
+                keywordInput.value = '';
+                filterTweets();
+            }
+        }
+
+        addKeywordBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            addKeyword();
+        });
+
+        keywordInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                addKeyword();
             }
         });
 
@@ -409,12 +680,10 @@
             const query = searchInput.value.trim();
             if (query) {
                 const searchUrl = `https://x.com/search?q=${encodeURIComponent(query)}&src=typed_query`;
-                console.log('🔍 搜索:', query, searchUrl);
                 window.location.href = searchUrl;
             }
         }
 
-        // 回车搜索
         searchInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
@@ -422,25 +691,23 @@
             }
         });
 
-        // 点击搜索按钮
-        submitBtn.addEventListener('click', (e) => {
+        container.querySelector('.tw-search-submit').addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
             doSearch();
         });
 
-        // 阻止输入框内点击冒泡
-        inputBox.addEventListener('click', (e) => {
-            e.stopPropagation();
-        });
+        // 阻止点击冒泡
+        searchPanel.addEventListener('click', e => e.stopPropagation());
+        filterPanel.addEventListener('click', e => e.stopPropagation());
 
-        // 点击外部关闭搜索框
+        // 点击外部关闭
         document.addEventListener('click', () => {
-            inputBox.classList.remove('active');
+            searchPanel.classList.remove('active');
+            filterPanel.classList.remove('active');
         });
 
         document.body.appendChild(container);
-        console.log('✅ 悬浮工具栏已创建');
     }
 
     // 强制覆盖内联样式
@@ -461,6 +728,9 @@
         updateSidebarState();
         createFloatingToolbar();
         forceWideScreen();
+        filterTweets();
+        autoExpandTweets();
+        forceCenterImages();
     }
 
     // 等待页面加载
@@ -477,6 +747,9 @@
         }
         updateSidebarState();
         forceWideScreen();
+        filterTweets();
+        autoExpandTweets();
+        forceCenterImages();
     });
 
     // 页面加载后开始监听
@@ -493,5 +766,5 @@
     setTimeout(init, 2000);
     setTimeout(init, 4000);
 
-    console.log('🐦 Twitter/X 宽屏优化脚本 v1.3 已加载');
+    console.log('🐦 Twitter/X 宽屏优化脚本 v2.1 已加载');
 })();
