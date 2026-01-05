@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitter/X 宽屏优化
 // @namespace    http://tampermonkey.net/
-// @version      2.1
+// @version      2.4
 // @description  隐藏左右侧栏，搜索框悬浮左下角，推文宽屏显示，文字紧凑排版，单图居中，自定义关键词屏蔽，自动展开长文
 // @author       You
 // @match        https://twitter.com/*
@@ -181,40 +181,19 @@
             display: inline !important;
         }
 
-        /* ========== 图片居中增强 (CSS部分) ========== */
+        /* ========== 图片居中增强 (纯 CSS) ========== */
         
         /* 强制图片容器宽度 100% 并 Flex 居中 */
         [data-testid="tweetPhoto"] {
             display: flex !important;
             justify-content: center !important;
             align-items: center !important;
-            width: 100% !important;
-            /* 关键恢复：不要强制 max-width 100%，让它自然撑开，只是父级居中 */
-            /* max-width: 100% !important; */
             margin: 0 auto !important;
-        }
-
-        /* 图片父级的一系列容器修正 */
-        /* 不要过于激进地修改所有 css-1dbjc4n 容器，这会导致塌陷 */
-        /* 仅针对已知包裹层 */
-        
-        /* 针对图片内的 img，防止 absolute 定位导致的问题 */
-        /* Twitter 的图片通常是 absolute 定位在 padding-bottom 撑开的容器里 
-           我们不能简单地改为 static，否则高度会变为 0
-        */
-        
-        /* 尝试让最外层的 tweetPhoto 容器居中 */
-        div[aria-labelledby] > div[class*="css-1dbjc4n"] {
-            /* 这种宽泛选择器可能导致问题，先注释掉 */
-            /* display: flex !important; */
-            /* justify-content: center !important; */
         }
 
         /* card wrapper (如果有外链卡片) */
         [data-testid="card.wrapper"] {
             margin: 0 auto !important;
-            /* display: flex !important; */
-            /* justify-content: center !important; */
         }
 
         /* ========== 悬浮工具栏 ========== */
@@ -470,56 +449,16 @@
 
         showMoreButtons.forEach(btn => {
             if (!btn.dataset.clicked) {
-                // 如果是 <a> 标签且为跳转链接（href 不是 # 且不为空），则不要点击
                 if (btn.tagName === 'A') {
                     const href = btn.getAttribute('href');
                     if (href && href.length > 1 && href !== '#') {
                         return;
                     }
                 }
-
                 btn.click();
                 btn.dataset.clicked = "true";
                 btn.style.display = 'none';
             }
-        });
-    }
-
-    // 修复图片居中逻辑（温和版）
-    function forceCenterImages() {
-        // 只处理最外层的图片容器，避免深入修改破坏布局
-        const photos = document.querySelectorAll('[data-testid="tweetPhoto"]');
-
-        photos.forEach(photo => {
-            // 设置 photo 容器自身居中
-            if (photo.style.margin !== '0px auto') {
-                photo.style.setProperty('margin', '0 auto', 'important');
-            }
-            // 确保它是 block 或 flex 以响应 auto margin
-            /*
-            const display = window.getComputedStyle(photo).display;
-            if (display === 'inline' || display === 'inline-block') {
-                 photo.style.setProperty('display', 'block', 'important');
-            }
-            */
-
-            // 尝试处理父容器，但不强制修改宽高
-            const parent = photo.parentElement;
-            if (parent) {
-                // 检查父容器是否有固定的宽度且靠左
-                // 很多时候是这个父容器导致的
-                // 我们不修改它的 display 属性，只修改 margin
-                parent.style.setProperty('margin-left', 'auto', 'important');
-                parent.style.setProperty('margin-right', 'auto', 'important');
-
-                // 只有当父容器宽度明显小于内容区时，才尝试拉伸（这比较危险，先不拉伸）
-            }
-        });
-
-        // 针对卡片（card.wrapper）
-        const cards = document.querySelectorAll('[data-testid="card.wrapper"]');
-        cards.forEach(card => {
-            card.style.setProperty('margin', '0 auto', 'important');
         });
     }
 
@@ -730,7 +669,6 @@
         forceWideScreen();
         filterTweets();
         autoExpandTweets();
-        forceCenterImages();
     }
 
     // 等待页面加载
@@ -749,7 +687,6 @@
         forceWideScreen();
         filterTweets();
         autoExpandTweets();
-        forceCenterImages();
     });
 
     // 页面加载后开始监听
@@ -766,5 +703,5 @@
     setTimeout(init, 2000);
     setTimeout(init, 4000);
 
-    console.log('🐦 Twitter/X 宽屏优化脚本 v2.1 已加载');
+    console.log('🐦 Twitter/X 宽屏优化脚本 v2.4 (Clean) 已加载');
 })();
