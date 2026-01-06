@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Twitter/X 宽屏优化
 // @namespace    http://tampermonkey.net/
-// @version      2.4
-// @description  隐藏左右侧栏，搜索框悬浮左下角，推文宽屏显示，文字紧凑排版，单图居中，自定义关键词屏蔽，自动展开长文
+// @version      2.6
+// @description  隐藏左右侧栏，搜索框悬浮左下角，推文宽度可调节，文字紧凑排版，图片/视频居中，自定义关键词屏蔽，自动展开长文
 // @author       You
 // @match        https://twitter.com/*
 // @match        https://x.com/*
@@ -22,6 +22,8 @@
     let sidebarVisible = GM_getValue('sidebarVisible', false);
     // 屏蔽词列表
     let blockedKeywords = GM_getValue('blockedKeywords', []);
+    // 推文宽度 (500-1400px)
+    let tweetWidth = GM_getValue('tweetWidth', 900);
 
     // 添加自定义样式
     const customStyles = `
@@ -139,22 +141,14 @@
             width: 100% !important;
         }
 
-        /* 限制最大宽度，避免太宽影响阅读 */
+        /* 限制最大宽度，使用 CSS 变量动态控制 */
+        :root {
+            --tw-tweet-width: 900px;
+        }
+
         [data-testid="primaryColumn"] {
-            max-width: 900px !important;
+            max-width: var(--tw-tweet-width) !important;
             margin: 0 auto !important;
-        }
-
-        @media (min-width: 1200px) {
-            [data-testid="primaryColumn"] {
-                max-width: 1000px !important;
-            }
-        }
-
-        @media (min-width: 1600px) {
-            [data-testid="primaryColumn"] {
-                max-width: 1100px !important;
-            }
         }
 
         /* ========== 文字排版优化：居中和紧凑 ========== */
@@ -181,9 +175,9 @@
             display: inline !important;
         }
 
-        /* ========== 图片居中增强 (纯 CSS) ========== */
-        
-        /* 强制图片容器宽度 100% 并 Flex 居中 */
+        /* ========== 图片居中增强 ========== */
+
+        /* 图片容器居中 */
         [data-testid="tweetPhoto"] {
             display: flex !important;
             justify-content: center !important;
@@ -191,9 +185,45 @@
             margin: 0 auto !important;
         }
 
-        /* card wrapper (如果有外链卡片) */
+        /* 图片父级容器居中 */
+        [data-testid="tweet"] [aria-labelledby] > div > div:has([data-testid="tweetPhoto"]) {
+            display: flex !important;
+            justify-content: center !important;
+        }
+
+        /* 多图网格居中 */
+        [data-testid="tweet"] div[aria-labelledby] > div > div > div:has(> a[href*="/photo/"]) {
+            margin: 0 auto !important;
+        }
+
+        /* 单图居中 - 图片链接容器 */
+        [data-testid="tweet"] a[href*="/photo/"] {
+            display: flex !important;
+            justify-content: center !important;
+        }
+
+        /* 图片本身居中 */
+        [data-testid="tweetPhoto"] img {
+            margin: 0 auto !important;
+            display: block !important;
+        }
+
+        /* 视频/GIF 容器居中 */
+        [data-testid="videoPlayer"],
+        [data-testid="videoComponent"] {
+            margin: 0 auto !important;
+        }
+
+        /* card wrapper (外链卡片) 居中 */
         [data-testid="card.wrapper"] {
             margin: 0 auto !important;
+        }
+
+        /* 媒体容器通用居中 */
+        [data-testid="tweet"] > div > div > div:nth-child(2) > div:nth-child(2) {
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: center !important;
         }
 
         /* ========== 悬浮工具栏 ========== */
@@ -393,6 +423,90 @@
         .tw-keyword-tag .remove-btn:hover {
             color: #f91880 !important;
         }
+
+        /* ========== 宽度调节滑动条 ========== */
+        .tw-width-section {
+            margin-top: 16px !important;
+            padding-top: 16px !important;
+            border-top: 1px solid #333639 !important;
+        }
+
+        .tw-width-section h4 {
+            margin: 0 0 12px 0 !important;
+            font-size: 14px !important;
+            color: #fff !important;
+            display: flex !important;
+            justify-content: space-between !important;
+            align-items: center !important;
+        }
+
+        .tw-width-value {
+            color: rgb(29, 155, 240) !important;
+            font-weight: bold !important;
+        }
+
+        .tw-width-slider {
+            width: 100% !important;
+            height: 6px !important;
+            -webkit-appearance: none !important;
+            appearance: none !important;
+            background: #333639 !important;
+            border-radius: 3px !important;
+            outline: none !important;
+            cursor: pointer !important;
+        }
+
+        .tw-width-slider::-webkit-slider-thumb {
+            -webkit-appearance: none !important;
+            appearance: none !important;
+            width: 18px !important;
+            height: 18px !important;
+            background: rgb(29, 155, 240) !important;
+            border-radius: 50% !important;
+            cursor: pointer !important;
+            transition: transform 0.1s ease !important;
+        }
+
+        .tw-width-slider::-webkit-slider-thumb:hover {
+            transform: scale(1.2) !important;
+        }
+
+        .tw-width-slider::-moz-range-thumb {
+            width: 18px !important;
+            height: 18px !important;
+            background: rgb(29, 155, 240) !important;
+            border-radius: 50% !important;
+            border: none !important;
+            cursor: pointer !important;
+        }
+
+        .tw-width-presets {
+            display: flex !important;
+            justify-content: space-between !important;
+            margin-top: 10px !important;
+            gap: 6px !important;
+        }
+
+        .tw-width-preset-btn {
+            flex: 1 !important;
+            padding: 6px 8px !important;
+            background: #2f3336 !important;
+            border: none !important;
+            border-radius: 6px !important;
+            color: #e7e9ea !important;
+            font-size: 12px !important;
+            cursor: pointer !important;
+            transition: background 0.2s ease !important;
+        }
+
+        .tw-width-preset-btn:hover {
+            background: #3a3f44 !important;
+        }
+
+        .tw-width-preset-btn.active {
+            background: rgb(29, 155, 240) !important;
+            color: #fff !important;
+        }
     `;
 
     // 注入样式
@@ -517,6 +631,17 @@
                     <button class="tw-filter-add-btn">添加</button>
                 </div>
                 <div class="tw-keyword-list"></div>
+
+                <div class="tw-width-section">
+                    <h4>推文宽度 <span class="tw-width-value">${tweetWidth}px</span></h4>
+                    <input type="range" class="tw-width-slider" min="500" max="1400" step="50" value="${tweetWidth}">
+                    <div class="tw-width-presets">
+                        <button class="tw-width-preset-btn" data-width="600">窄</button>
+                        <button class="tw-width-preset-btn" data-width="800">中</button>
+                        <button class="tw-width-preset-btn" data-width="1000">宽</button>
+                        <button class="tw-width-preset-btn" data-width="1200">超宽</button>
+                    </div>
+                </div>
             </div>
         `;
 
@@ -531,6 +656,41 @@
         const keywordInput = container.querySelector('#tw-keyword-input');
         const addKeywordBtn = container.querySelector('.tw-filter-add-btn');
         const keywordListContainer = container.querySelector('.tw-keyword-list');
+
+        // 宽度调节相关
+        const widthSlider = container.querySelector('.tw-width-slider');
+        const widthValue = container.querySelector('.tw-width-value');
+        const presetBtns = container.querySelectorAll('.tw-width-preset-btn');
+
+        // 更新推文宽度
+        function updateTweetWidth(width) {
+            tweetWidth = width;
+            GM_setValue('tweetWidth', width);
+            document.documentElement.style.setProperty('--tw-tweet-width', width + 'px');
+            widthValue.textContent = width + 'px';
+            widthSlider.value = width;
+
+            // 更新预设按钮状态
+            presetBtns.forEach(btn => {
+                btn.classList.toggle('active', parseInt(btn.dataset.width) === width);
+            });
+        }
+
+        // 初始化宽度
+        updateTweetWidth(tweetWidth);
+
+        // 滑动条事件
+        widthSlider.addEventListener('input', (e) => {
+            updateTweetWidth(parseInt(e.target.value));
+        });
+
+        // 预设按钮事件
+        presetBtns.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                updateTweetWidth(parseInt(btn.dataset.width));
+            });
+        });
 
         // 更新关键词列表 UI
         function renderKeywords() {
@@ -662,8 +822,26 @@
         }
     }
 
+    // 初始化标志，防止重复初始化
+    let initialized = false;
+
+    // 防抖函数
+    function debounce(fn, delay) {
+        let timer = null;
+        return function (...args) {
+            if (timer) clearTimeout(timer);
+            timer = setTimeout(() => fn.apply(this, args), delay);
+        };
+    }
+
     // 初始化
     function init() {
+        if (initialized && document.querySelector('.tw-floating-toolbar')) {
+            return;
+        }
+        initialized = true;
+        // 设置初始宽度
+        document.documentElement.style.setProperty('--tw-tweet-width', tweetWidth + 'px');
         updateSidebarState();
         createFloatingToolbar();
         forceWideScreen();
@@ -671,15 +849,8 @@
         autoExpandTweets();
     }
 
-    // 等待页面加载
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
-    }
-
-    // 监听 DOM 变化
-    const observer = new MutationObserver(() => {
+    // DOM 变化时的处理（防抖优化）
+    const handleMutation = debounce(() => {
         if (!document.querySelector('.tw-floating-toolbar')) {
             createFloatingToolbar();
         }
@@ -687,21 +858,28 @@
         forceWideScreen();
         filterTweets();
         autoExpandTweets();
-    });
+    }, 100);
 
-    // 页面加载后开始监听
-    setTimeout(() => {
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true
-        });
-        init();
-    }, 1000);
+    // 监听 DOM 变化
+    const observer = new MutationObserver(handleMutation);
 
-    // 多次尝试初始化
-    setTimeout(init, 500);
-    setTimeout(init, 2000);
-    setTimeout(init, 4000);
+    // 启动观察器
+    function startObserver() {
+        if (document.body) {
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
+            init();
+        }
+    }
 
-    console.log('🐦 Twitter/X 宽屏优化脚本 v2.4 (Clean) 已加载');
+    // 等待页面加载
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', startObserver);
+    } else {
+        startObserver();
+    }
+
+    console.log('🐦 Twitter/X 宽屏优化脚本 v2.6 已加载');
 })();
