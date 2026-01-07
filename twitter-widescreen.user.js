@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Twitter/X 宽屏优化
 // @namespace    http://tampermonkey.net/
-// @version      2.6
-// @description  隐藏左右侧栏，搜索框悬浮左下角，推文宽度可调节，文字紧凑排版，图片/视频居中，自定义关键词屏蔽，自动展开长文
+// @version      2.8
+// @description  隐藏左右侧栏，搜索框悬浮左下角，推文宽度可调节，斑马纹区分推文，文字紧凑排版，自定义关键词屏蔽，自动展开长文
 // @author       You
 // @match        https://twitter.com/*
 // @match        https://x.com/*
@@ -175,55 +175,13 @@
             display: inline !important;
         }
 
-        /* ========== 图片居中增强 ========== */
-
-        /* 图片容器居中 */
-        [data-testid="tweetPhoto"] {
-            display: flex !important;
-            justify-content: center !important;
-            align-items: center !important;
-            margin: 0 auto !important;
+        /* ========== 斑马纹效果 ========== */
+        article[data-testid="tweet"]:nth-child(even) {
+            background-color: rgba(255, 255, 255, 0.03) !important;
         }
 
-        /* 图片父级容器居中 */
-        [data-testid="tweet"] [aria-labelledby] > div > div:has([data-testid="tweetPhoto"]) {
-            display: flex !important;
-            justify-content: center !important;
-        }
-
-        /* 多图网格居中 */
-        [data-testid="tweet"] div[aria-labelledby] > div > div > div:has(> a[href*="/photo/"]) {
-            margin: 0 auto !important;
-        }
-
-        /* 单图居中 - 图片链接容器 */
-        [data-testid="tweet"] a[href*="/photo/"] {
-            display: flex !important;
-            justify-content: center !important;
-        }
-
-        /* 图片本身居中 */
-        [data-testid="tweetPhoto"] img {
-            margin: 0 auto !important;
-            display: block !important;
-        }
-
-        /* 视频/GIF 容器居中 */
-        [data-testid="videoPlayer"],
-        [data-testid="videoComponent"] {
-            margin: 0 auto !important;
-        }
-
-        /* card wrapper (外链卡片) 居中 */
-        [data-testid="card.wrapper"] {
-            margin: 0 auto !important;
-        }
-
-        /* 媒体容器通用居中 */
-        [data-testid="tweet"] > div > div > div:nth-child(2) > div:nth-child(2) {
-            display: flex !important;
-            flex-direction: column !important;
-            align-items: center !important;
+        article[data-testid="tweet"]:nth-child(odd) {
+            background-color: transparent !important;
         }
 
         /* ========== 悬浮工具栏 ========== */
@@ -881,5 +839,5 @@
         startObserver();
     }
 
-    console.log('🐦 Twitter/X 宽屏优化脚本 v2.6 已加载');
+    console.log('🐦 Twitter/X 宽屏优化脚本 v2.8 已加载');
 })();
