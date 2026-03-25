@@ -178,19 +178,35 @@
         }
         #${TOGGLE_ID} {
             position: fixed;
-            top: 124px;
-            right: 0;
+            top: 132px;
+            right: 18px;
             z-index: 999998;
-            writing-mode: vertical-rl;
-            text-orientation: upright;
-            letter-spacing: 2px;
-            padding: 12px 5px;
-            border-radius: 8px 0 0 8px;
+            width: 52px;
+            height: 52px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             cursor: pointer;
-            background: #fe2c55;
+            background: linear-gradient(180deg, #fe4d73 0%, #fe2c55 100%);
             color: #fff;
-            box-shadow: 0 8px 24px rgba(254, 44, 85, 0.28);
+            border-radius: 18px;
+            box-shadow: 0 14px 30px rgba(254, 44, 85, 0.34);
             user-select: none;
+            transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease;
+        }
+        #${TOGGLE_ID}:hover {
+            transform: translateY(-2px) scale(1.03);
+            box-shadow: 0 18px 34px rgba(254, 44, 85, 0.4);
+            filter: saturate(1.08);
+        }
+        #${TOGGLE_ID}:active {
+            transform: scale(0.96);
+        }
+        #${TOGGLE_ID} svg {
+            width: 28px;
+            height: 28px;
+            display: block;
+            fill: currentColor;
         }
         #${LOG_ID} {
             position: fixed;
@@ -1307,6 +1323,13 @@
         toggleButton.id = TOGGLE_ID;
         toggleButton.innerText = '过滤设置';
         toggleButton.addEventListener('click', () => togglePanel());
+        toggleButton.title = '过滤设置';
+        toggleButton.setAttribute('aria-label', '过滤设置');
+        toggleButton.innerHTML = `
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 7.75C4 6.784 4.784 6 5.75 6h1.1a2.75 2.75 0 0 1 5.3 0h6.1a1.75 1.75 0 1 1 0 3.5h-6.1a2.75 2.75 0 0 1-5.3 0h-1.1A1.75 1.75 0 0 1 4 7.75Zm10 8.5c0-.966.784-1.75 1.75-1.75h1.1a2.75 2.75 0 0 1 5.3 0h.1a1.75 1.75 0 1 1 0 3.5h-.1a2.75 2.75 0 0 1-5.3 0h-1.1A1.75 1.75 0 0 1 14 16.25ZM2 16.25c0-.966.784-1.75 1.75-1.75h6.1a2.75 2.75 0 0 1 5.3 0h.1a1.75 1.75 0 1 1 0 3.5h-.1a2.75 2.75 0 0 1-5.3 0h-6.1A1.75 1.75 0 0 1 2 16.25Z"/>
+            </svg>
+        `;
         document.body.appendChild(toggleButton);
 
         const panel = document.createElement('div');
