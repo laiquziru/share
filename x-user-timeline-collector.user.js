@@ -1,11 +1,14 @@
 // ==UserScript==
 // @name         X 用户主页推文采集器
 // @namespace    https://example.local/
-// @version      0.2.0
-// @description  在 X 用户主页或首页点击按钮后自动滚动采集推文，并支持导出 JSON、CSV 与图片 ZIP 下载。
+// @version      0.3.0
+// @description  合并宽屏布局、搜索、关键词过滤与时间线采集导出功能的 X userscript。
 // @author       Codex
 // @match        https://x.com/*
 // @require      https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js
+// @grant        GM_addStyle
+// @grant        GM_getValue
+// @grant        GM_setValue
 // @grant        GM_download
 // @grant        GM_xmlhttpRequest
 // @connect      pbs.twimg.com
@@ -19,8 +22,12 @@
 (function () {
   "use strict";
 
+  window.__xMergedCollectorActive = true;
+
   const CONFIG = {
+    toolbarId: "x-merged-toolbar",
     panelId: "x-tweet-collector-panel",
+    scopeId: "x-tweet-collector-scope",
     statusId: "x-tweet-collector-status",
     startButtonId: "x-tweet-collector-start",
     stopButtonId: "x-tweet-collector-stop",
@@ -28,6 +35,19 @@
     exportCsvButtonId: "x-tweet-collector-export-csv",
     exportMdButtonId: "x-tweet-collector-export-md",
     downloadMediaButtonId: "x-tweet-collector-download-media",
+    searchInputId: "x-toolbar-search-input",
+    searchSubmitId: "x-toolbar-search-submit",
+    keywordInputId: "x-toolbar-keyword-input",
+    keywordAddButtonId: "x-toolbar-keyword-add",
+    keywordListId: "x-toolbar-keyword-list",
+    widthValueId: "x-toolbar-width-value",
+    widthSliderId: "x-toolbar-width-slider",
+    sidebarStorageKey: "xuc_sidebar_visible",
+    blockedKeywordsStorageKey: "xuc_blocked_keywords",
+    tweetWidthStorageKey: "xuc_tweet_width",
+    minTweetWidth: 500,
+    maxTweetWidth: 1400,
+    defaultTweetWidth: 900,
     maxIdleRounds: 8,
     maxScrollRounds: 400,
     maxTweets: 3000,
@@ -37,12 +57,70 @@
     topResetDelayMs: 1500,
   };
 
+  function storageGet(key, fallbackValue) {
+    try {
+      if (typeof GM_getValue === "function") {
+        return GM_getValue(key, fallbackValue);
+      }
+    } catch (error) {
+      console.warn("[X Collector] storageGet failed:", key, error);
+    }
+    return fallbackValue;
+  }
+
+  function storageSet(key, value) {
+    try {
+      if (typeof GM_setValue === "function") {
+        GM_setValue(key, value);
+      }
+    } catch (error) {
+      console.warn("[X Collector] storageSet failed:", key, error);
+    }
+  }
+
+  function addStyle(cssText) {
+    if (typeof GM_addStyle === "function") {
+      GM_addStyle(cssText);
+      return;
+    }
+
+    const style = document.createElement("style");
+    style.textContent = cssText;
+    document.documentElement.appendChild(style);
+  }
+
+  function clampTweetWidth(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return CONFIG.defaultTweetWidth;
+    }
+
+    const clamped = Math.min(CONFIG.maxTweetWidth, Math.max(CONFIG.minTweetWidth, numeric));
+    return Math.round(clamped / 50) * 50;
+  }
+
+  function normalizeBlockedKeywords(value) {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .filter((item, index, list) => list.indexOf(item) === index);
+  }
+
   const state = {
     running: false,
     tweets: [],
     tweetMap: new Map(),
     stopRequested: false,
-    currentPath: "",
+    currentUrl: "",
+    openPanel: "",
+    toolbarReady: false,
+    sidebarVisible: Boolean(storageGet(CONFIG.sidebarStorageKey, false)),
+    blockedKeywords: normalizeBlockedKeywords(storageGet(CONFIG.blockedKeywordsStorageKey, [])),
+    tweetWidth: clampTweetWidth(storageGet(CONFIG.tweetWidthStorageKey, CONFIG.defaultTweetWidth)),
   };
 
   function sleep(ms) {
@@ -653,16 +731,28 @@
     }
   }
 
+  function setScopeLabel(message) {
+    const node = document.getElementById(CONFIG.scopeId);
+    if (node) {
+      node.textContent = message;
+    }
+  }
+
   function updateButtons() {
+    const canCollect = canCollectCurrentPage(window.location.pathname);
     const startButton = document.getElementById(CONFIG.startButtonId);
     const stopButton = document.getElementById(CONFIG.stopButtonId);
     const exportJsonButton = document.getElementById(CONFIG.exportJsonButtonId);
     const exportCsvButton = document.getElementById(CONFIG.exportCsvButtonId);
     const exportMdButton = document.getElementById(CONFIG.exportMdButtonId);
     const downloadMediaButton = document.getElementById(CONFIG.downloadMediaButtonId);
+    const sidebarToggle = document.querySelector(".xuc-sidebar-toggle");
+    const searchToggle = document.querySelector(".xuc-search-toggle");
+    const layoutToggle = document.querySelector(".xuc-layout-toggle");
+    const collectorToggle = document.querySelector(".xuc-collector-toggle");
 
     if (startButton) {
-      startButton.disabled = state.running;
+      startButton.disabled = state.running || !canCollect;
       startButton.textContent = state.running ? "采集中..." : "采集推文";
     }
     if (stopButton) {
@@ -679,6 +769,19 @@
     }
     if (downloadMediaButton) {
       downloadMediaButton.disabled = state.running || !state.tweets.length;
+    }
+
+    if (sidebarToggle) {
+      sidebarToggle.classList.toggle("sidebar-enabled", state.sidebarVisible);
+    }
+    if (searchToggle) {
+      searchToggle.classList.toggle("active", state.openPanel === "search");
+    }
+    if (layoutToggle) {
+      layoutToggle.classList.toggle("active", state.openPanel === "layout");
+    }
+    if (collectorToggle) {
+      collectorToggle.classList.toggle("active", state.openPanel === "collector");
     }
   }
 
@@ -761,73 +864,648 @@
     setStatus("正在停止采集...");
   }
 
-  function buildPanel() {
-    const panel = document.createElement("div");
-    panel.id = CONFIG.panelId;
-    panel.innerHTML = `
-      <div style="font-weight:700;margin-bottom:6px;">X 推文采集</div>
-      <button id="${CONFIG.startButtonId}" type="button">采集推文</button>
-      <button id="${CONFIG.stopButtonId}" type="button">停止</button>
-      <button id="${CONFIG.exportJsonButtonId}" type="button">导出 JSON</button>
-      <button id="${CONFIG.exportCsvButtonId}" type="button">导出 CSV</button>
-      <button id="${CONFIG.exportMdButtonId}" type="button">导出 Markdown</button>
-      <button id="${CONFIG.downloadMediaButtonId}" type="button">下载图片 ZIP</button>
-      <div id="${CONFIG.statusId}" style="margin-top:6px;line-height:1.35;">等待开始</div>
-    `;
+  let stylesInjected = false;
+  let historyWatcherInstalled = false;
+  let domObserver = null;
 
-    Object.assign(panel.style, {
-      position: "fixed",
-      right: "12px",
-      bottom: "12px",
-      zIndex: "2147483647",
-      width: "220px",
-      padding: "9px",
-      borderRadius: "10px",
-      background: "rgba(15, 20, 25, 0.92)",
-      color: "#fff",
-      boxShadow: "0 8px 30px rgba(0, 0, 0, 0.35)",
-      fontSize: "12px",
-      fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-      backdropFilter: "blur(8px)",
+  function debounce(fn, delay) {
+    let timer = null;
+    return function debounced(...args) {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => fn.apply(this, args), delay);
+    };
+  }
+
+  function injectAppStyles() {
+    if (stylesInjected) {
+      return;
+    }
+
+    addStyle(`
+      :root {
+        --xuc-tweet-width: ${state.tweetWidth}px;
+      }
+
+      [data-testid="sidebarColumn"] {
+        display: none !important;
+      }
+
+      body:not(.xuc-sidebar-visible) header[role="banner"] {
+        display: none !important;
+      }
+
+      body:not(.xuc-sidebar-visible) main[role="main"] {
+        width: 100% !important;
+        max-width: 100% !important;
+        align-items: center !important;
+      }
+
+      body:not(.xuc-sidebar-visible) main[role="main"] > div {
+        width: 100% !important;
+        max-width: 100% !important;
+        display: flex !important;
+        justify-content: center !important;
+      }
+
+      body:not(.xuc-sidebar-visible) main[role="main"] > div > div {
+        width: 100% !important;
+        max-width: 100% !important;
+        display: flex !important;
+        justify-content: center !important;
+      }
+
+      body.xuc-sidebar-visible main[role="main"] {
+        align-items: flex-start !important;
+      }
+
+      body.xuc-sidebar-visible main[role="main"] > div {
+        justify-content: flex-start !important;
+      }
+
+      body.xuc-sidebar-visible main[role="main"] > div > div {
+        justify-content: flex-start !important;
+      }
+
+      [data-testid="primaryColumn"] {
+        width: min(100%, var(--xuc-tweet-width)) !important;
+        max-width: var(--xuc-tweet-width) !important;
+        margin: 0 auto !important;
+        flex-grow: 1 !important;
+      }
+
+      [data-testid="primaryColumn"] > div,
+      [data-testid="primaryColumn"] > div > div,
+      [data-testid="cellInnerDiv"],
+      article[data-testid="tweet"],
+      [data-testid="tweetText"] {
+        width: 100% !important;
+        max-width: none !important;
+      }
+
+      [data-testid="tweetText"] {
+        word-break: break-word !important;
+        overflow-wrap: anywhere !important;
+        line-height: 1.45 !important;
+      }
+
+      div[style*="max-width: 600px"] {
+        max-width: none !important;
+      }
+
+      article[data-testid="tweet"]:nth-of-type(even) {
+        background: rgba(255, 255, 255, 0.025) !important;
+      }
+
+      #${CONFIG.toolbarId} {
+        position: fixed !important;
+        left: 20px !important;
+        bottom: 20px !important;
+        z-index: 2147483647 !important;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: flex-start !important;
+        gap: 12px !important;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-toolbar-buttons {
+        display: flex !important;
+        align-items: center !important;
+        gap: 10px !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-toolbar-btn {
+        width: 48px !important;
+        height: 48px !important;
+        border: none !important;
+        border-radius: 999px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        cursor: pointer !important;
+        color: #fff !important;
+        background: rgba(83, 100, 113, 0.92) !important;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28) !important;
+        transition: transform 0.18s ease, background 0.18s ease, box-shadow 0.18s ease !important;
+        backdrop-filter: blur(10px) !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-toolbar-btn:hover {
+        transform: translateY(-1px) scale(1.04) !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-toolbar-btn svg {
+        width: 22px !important;
+        height: 22px !important;
+        fill: currentColor !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-sidebar-toggle.sidebar-enabled {
+        background: #00ba7c !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-toolbar-btn.active {
+        box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.2), 0 10px 26px rgba(0, 0, 0, 0.32) !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-panel {
+        display: none !important;
+        width: min(340px, calc(100vw - 24px)) !important;
+        max-height: min(72vh, 620px) !important;
+        overflow-y: auto !important;
+        padding: 16px !important;
+        border: 1px solid rgba(255, 255, 255, 0.12) !important;
+        border-radius: 18px !important;
+        background: rgba(15, 20, 25, 0.95) !important;
+        color: #e7e9ea !important;
+        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.38) !important;
+        backdrop-filter: blur(14px) !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-panel.active {
+        display: block !important;
+      }
+    `);
+
+    addStyle(`
+      #${CONFIG.toolbarId} .xuc-panel-title {
+        margin: 0 0 8px 0 !important;
+        font-size: 15px !important;
+        font-weight: 700 !important;
+        color: #fff !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-panel-subtitle,
+      #${CONFIG.toolbarId} #${CONFIG.scopeId},
+      #${CONFIG.toolbarId} #${CONFIG.statusId} {
+        font-size: 12px !important;
+        line-height: 1.45 !important;
+        color: #8b98a5 !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-search-box,
+      #${CONFIG.toolbarId} .xuc-input-row {
+        display: flex !important;
+        gap: 8px !important;
+        align-items: center !important;
+      }
+
+      #${CONFIG.toolbarId} input[type="text"] {
+        flex: 1 1 auto !important;
+        min-width: 0 !important;
+        padding: 10px 12px !important;
+        border: 1px solid #2f3336 !important;
+        border-radius: 10px !important;
+        background: #0f1419 !important;
+        color: #fff !important;
+        outline: none !important;
+      }
+
+      #${CONFIG.toolbarId} input[type="text"]:focus {
+        border-color: #1d9bf0 !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-panel button,
+      #${CONFIG.toolbarId} .xuc-preset-btn {
+        border: 1px solid rgba(255, 255, 255, 0.14) !important;
+        border-radius: 10px !important;
+        padding: 8px 10px !important;
+        background: #15202b !important;
+        color: #fff !important;
+        cursor: pointer !important;
+        font-size: 12px !important;
+        line-height: 1.25 !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-panel button:disabled {
+        opacity: 0.5 !important;
+        cursor: not-allowed !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-panel button.xuc-primary {
+        background: #1d9bf0 !important;
+        border-color: transparent !important;
+        color: #fff !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-panel button.xuc-accent {
+        background: #794bc4 !important;
+        border-color: transparent !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-panel button.xuc-danger {
+        background: #f4212e !important;
+        border-color: transparent !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-keyword-list {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        gap: 8px !important;
+        margin-top: 12px !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-keyword-tag {
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        padding: 5px 10px !important;
+        border-radius: 999px !important;
+        background: #1f2428 !important;
+        color: #e7e9ea !important;
+        font-size: 12px !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-keyword-tag button {
+        padding: 0 !important;
+        width: 18px !important;
+        height: 18px !important;
+        border: none !important;
+        border-radius: 999px !important;
+        background: transparent !important;
+        color: #8b98a5 !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-width-section {
+        margin-top: 14px !important;
+        padding-top: 14px !important;
+        border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-width-head {
+        display: flex !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        margin-bottom: 10px !important;
+        font-size: 13px !important;
+      }
+
+      #${CONFIG.toolbarId} input[type="range"] {
+        width: 100% !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-preset-row,
+      #${CONFIG.toolbarId} .xuc-action-row {
+        display: grid !important;
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        gap: 8px !important;
+        margin-top: 10px !important;
+      }
+
+      #${CONFIG.toolbarId} #${CONFIG.statusId} {
+        margin-top: 10px !important;
+        padding-top: 10px !important;
+        border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+        white-space: pre-wrap !important;
+      }
+
+      @media (max-width: 720px) {
+        #${CONFIG.toolbarId} {
+          left: 12px !important;
+          right: 12px !important;
+          bottom: 12px !important;
+        }
+
+        #${CONFIG.toolbarId} .xuc-panel {
+          width: min(100vw - 24px, 340px) !important;
+        }
+      }
+    `);
+
+    stylesInjected = true;
+  }
+
+  function applySidebarState() {
+    document.body.classList.toggle("xuc-sidebar-visible", state.sidebarVisible);
+  }
+
+  function applyTweetWidth() {
+    document.documentElement.style.setProperty("--xuc-tweet-width", `${state.tweetWidth}px`);
+  }
+
+  function resetHiddenTweets() {
+    document.querySelectorAll('[data-xuc-hidden-by-keyword="true"]').forEach((node) => {
+      node.style.display = "";
+      node.removeAttribute("data-xuc-hidden-by-keyword");
+    });
+  }
+
+  function applyKeywordFilters() {
+    resetHiddenTweets();
+
+    if (!state.blockedKeywords.length) {
+      return;
+    }
+
+    const loweredKeywords = state.blockedKeywords.map((keyword) => keyword.toLowerCase());
+    const tweets = document.querySelectorAll('article[data-testid="tweet"]');
+
+    tweets.forEach((tweet) => {
+      const text = (tweet.innerText || "").toLowerCase();
+      if (!text) {
+        return;
+      }
+
+      const matched = loweredKeywords.some((keyword) => text.includes(keyword));
+      if (!matched) {
+        return;
+      }
+
+      const container = tweet.closest('[data-testid="cellInnerDiv"]') || tweet;
+      container.style.display = "none";
+      container.setAttribute("data-xuc-hidden-by-keyword", "true");
+    });
+  }
+
+  function autoExpandTweets() {
+    document.querySelectorAll('[data-testid="tweet-text-show-more-link"]').forEach((button) => {
+      if (button.dataset.xucExpanded === "true") {
+        return;
+      }
+
+      if (button.tagName === "A") {
+        const href = button.getAttribute("href");
+        if (href && href !== "#") {
+          return;
+        }
+      }
+
+      button.dataset.xucExpanded = "true";
+      button.click();
+    });
+  }
+
+  function renderKeywordTags() {
+    const list = document.getElementById(CONFIG.keywordListId);
+    if (!list) {
+      return;
+    }
+
+    list.replaceChildren();
+
+    state.blockedKeywords.forEach((keyword, index) => {
+      const tag = document.createElement("div");
+      tag.className = "xuc-keyword-tag";
+
+      const text = document.createElement("span");
+      text.textContent = keyword;
+
+      const removeButton = document.createElement("button");
+      removeButton.type = "button";
+      removeButton.textContent = "×";
+      removeButton.title = "删除关键词";
+      removeButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        state.blockedKeywords.splice(index, 1);
+        storageSet(CONFIG.blockedKeywordsStorageKey, state.blockedKeywords);
+        renderKeywordTags();
+        applyKeywordFilters();
+      });
+
+      tag.appendChild(text);
+      tag.appendChild(removeButton);
+      list.appendChild(tag);
+    });
+  }
+
+  function updateWidthControls() {
+    const widthValue = document.getElementById(CONFIG.widthValueId);
+    const widthSlider = document.getElementById(CONFIG.widthSliderId);
+    const presetButtons = document.querySelectorAll(".xuc-preset-btn");
+
+    if (widthValue) {
+      widthValue.textContent = `${state.tweetWidth}px`;
+    }
+    if (widthSlider) {
+      widthSlider.value = String(state.tweetWidth);
+    }
+
+    presetButtons.forEach((button) => {
+      const isActive = Number(button.dataset.width) === state.tweetWidth;
+      button.classList.toggle("active", isActive);
+      button.style.background = isActive ? "#1d9bf0" : "#15202b";
+    });
+  }
+
+  function syncPanelVisibility() {
+    const mapping = {
+      search: document.querySelector(".xuc-search-panel"),
+      layout: document.querySelector(".xuc-layout-panel"),
+      collector: document.getElementById(CONFIG.panelId),
+    };
+
+    Object.entries(mapping).forEach(([name, node]) => {
+      if (node) {
+        node.classList.toggle("active", state.openPanel === name);
+      }
     });
 
-    const style = document.createElement("style");
-    style.textContent = `
-      #${CONFIG.panelId} button {
-        margin-right: 6px;
-        margin-bottom: 5px;
-        padding: 6px 8px;
-        border: 0;
-        border-radius: 7px;
-        background: #1d9bf0;
-        color: #fff;
-        cursor: pointer;
-        font-size: 12px;
-        line-height: 1.2;
-      }
+    updateButtons();
+  }
 
-      #${CONFIG.panelId} button:last-of-type {
-        background: #536471;
-      }
+  function togglePanel(panelName) {
+    state.openPanel = state.openPanel === panelName ? "" : panelName;
+    syncPanelVisibility();
+  }
 
-      #${CONFIG.exportJsonButtonId},
-      #${CONFIG.exportCsvButtonId},
-      #${CONFIG.exportMdButtonId},
-      #${CONFIG.downloadMediaButtonId} {
-        background: #15202b;
-        border: 1px solid rgba(255, 255, 255, 0.14);
-      }
+  function closePanels() {
+    if (!state.openPanel) {
+      return;
+    }
 
-      #${CONFIG.panelId} button:disabled {
-        opacity: 0.55;
-        cursor: not-allowed;
-      }
+    state.openPanel = "";
+    syncPanelVisibility();
+  }
+
+  function updateScopeInfo() {
+    const scope = getCollectionScope();
+    if (canCollectCurrentPage(window.location.pathname)) {
+      setScopeLabel(`当前页面: ${scope.label}`);
+      return;
+    }
+
+    setScopeLabel("当前页面不支持采集，仍可使用宽屏、搜索和关键词过滤。");
+  }
+
+  function updateTweetWidth(width) {
+    state.tweetWidth = clampTweetWidth(width);
+    storageSet(CONFIG.tweetWidthStorageKey, state.tweetWidth);
+    applyTweetWidth();
+    updateWidthControls();
+  }
+
+  function addBlockedKeyword() {
+    const input = document.getElementById(CONFIG.keywordInputId);
+    if (!input) {
+      return;
+    }
+
+    const value = String(input.value || "").trim();
+    if (!value || state.blockedKeywords.includes(value)) {
+      return;
+    }
+
+    state.blockedKeywords.push(value);
+    storageSet(CONFIG.blockedKeywordsStorageKey, state.blockedKeywords);
+    input.value = "";
+    renderKeywordTags();
+    applyKeywordFilters();
+  }
+
+  function runToolbarSearch() {
+    const input = document.getElementById(CONFIG.searchInputId);
+    const query = input ? String(input.value || "").trim() : "";
+    if (!query) {
+      return;
+    }
+
+    window.location.href = `${window.location.origin}/search?q=${encodeURIComponent(query)}&src=typed_query`;
+  }
+
+  function getToolbarIcons() {
+    return {
+      menu: `
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"></path>
+        </svg>
+      `,
+      search: `
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M10.25 3.75a6.5 6.5 0 1 0 4.58 11.12l4.65 4.66 1.41-1.42-4.65-4.65a6.5 6.5 0 0 0-5.99-9.71zm0 2a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9z"></path>
+        </svg>
+      `,
+      layout: `
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M10 6h10V4H10v2zM4 7.5A1.5 1.5 0 1 0 4 4.5a1.5 1.5 0 0 0 0 3zm10 6h6v-2h-6v2zM4 14.5A1.5 1.5 0 1 0 4 11.5a1.5 1.5 0 0 0 0 3zm6 5h10v-2H10v2zM4 20.5A1.5 1.5 0 1 0 4 17.5a1.5 1.5 0 0 0 0 3z"></path>
+        </svg>
+      `,
+      collector: `
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3a1 1 0 0 1 1 1v8.59l2.3-2.29 1.4 1.41-4.7 4.7-4.7-4.7 1.4-1.41 2.3 2.29V4a1 1 0 0 1 1-1zm-7 14h14v2a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-2z"></path>
+        </svg>
+      `,
+    };
+  }
+
+  function buildToolbar() {
+    if (!document.body || document.getElementById(CONFIG.toolbarId)) {
+      return;
+    }
+
+    injectAppStyles();
+    const icons = getToolbarIcons();
+    const toolbar = document.createElement("div");
+    toolbar.id = CONFIG.toolbarId;
+    toolbar.innerHTML = `
+      <div class="xuc-toolbar-buttons">
+        <button type="button" class="xuc-toolbar-btn xuc-sidebar-toggle" title="显示或隐藏左侧导航">${icons.menu}</button>
+        <button type="button" class="xuc-toolbar-btn xuc-search-toggle" title="打开搜索">${icons.search}</button>
+        <button type="button" class="xuc-toolbar-btn xuc-layout-toggle" title="宽度与关键词过滤">${icons.layout}</button>
+        <button type="button" class="xuc-toolbar-btn xuc-collector-toggle" title="采集与导出">${icons.collector}</button>
+      </div>
+
+      <div class="xuc-panel xuc-search-panel">
+        <div class="xuc-panel-title">搜索</div>
+        <div class="xuc-search-box">
+          <input id="${CONFIG.searchInputId}" type="text" placeholder="搜索 X..." />
+          <button id="${CONFIG.searchSubmitId}" type="button" class="xuc-primary">搜索</button>
+        </div>
+      </div>
+
+      <div class="xuc-panel xuc-layout-panel">
+        <div class="xuc-panel-title">布局与过滤</div>
+        <div class="xuc-panel-subtitle">关键词过滤会隐藏当前时间线中命中的推文。</div>
+        <div class="xuc-input-row" style="margin-top:10px;">
+          <input id="${CONFIG.keywordInputId}" type="text" placeholder="添加屏蔽关键词" />
+          <button id="${CONFIG.keywordAddButtonId}" type="button" class="xuc-primary">添加</button>
+        </div>
+        <div id="${CONFIG.keywordListId}" class="xuc-keyword-list"></div>
+        <div class="xuc-width-section">
+          <div class="xuc-width-head">
+            <span>推文宽度</span>
+            <strong id="${CONFIG.widthValueId}">${state.tweetWidth}px</strong>
+          </div>
+          <input id="${CONFIG.widthSliderId}" type="range" min="${CONFIG.minTweetWidth}" max="${CONFIG.maxTweetWidth}" step="50" value="${state.tweetWidth}" />
+          <div class="xuc-preset-row">
+            <button type="button" class="xuc-preset-btn" data-width="600">窄</button>
+            <button type="button" class="xuc-preset-btn" data-width="800">中</button>
+            <button type="button" class="xuc-preset-btn" data-width="1000">宽</button>
+            <button type="button" class="xuc-preset-btn" data-width="1200">超宽</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="${CONFIG.panelId}" class="xuc-panel">
+        <div class="xuc-panel-title">采集与导出</div>
+        <div id="${CONFIG.scopeId}">当前页面: 检测中...</div>
+        <div class="xuc-action-row">
+          <button id="${CONFIG.startButtonId}" type="button" class="xuc-primary">采集推文</button>
+          <button id="${CONFIG.stopButtonId}" type="button" class="xuc-danger">停止</button>
+          <button id="${CONFIG.exportJsonButtonId}" type="button">导出 JSON</button>
+          <button id="${CONFIG.exportCsvButtonId}" type="button">导出 CSV</button>
+          <button id="${CONFIG.exportMdButtonId}" type="button">导出 Markdown</button>
+          <button id="${CONFIG.downloadMediaButtonId}" type="button" class="xuc-accent">下载图片 ZIP</button>
+        </div>
+        <div id="${CONFIG.statusId}">等待开始</div>
+      </div>
     `;
 
-    document.documentElement.appendChild(style);
-    document.body.appendChild(panel);
+    toolbar.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
 
-    document.getElementById(CONFIG.startButtonId).addEventListener("click", () => {
+    toolbar.querySelector(".xuc-sidebar-toggle").addEventListener("click", () => {
+      state.sidebarVisible = !state.sidebarVisible;
+      storageSet(CONFIG.sidebarStorageKey, state.sidebarVisible);
+      applySidebarState();
+      updateButtons();
+    });
+
+    toolbar.querySelector(".xuc-search-toggle").addEventListener("click", () => {
+      togglePanel("search");
+      if (state.openPanel === "search") {
+        window.setTimeout(() => document.getElementById(CONFIG.searchInputId)?.focus(), 30);
+      }
+    });
+
+    toolbar.querySelector(".xuc-layout-toggle").addEventListener("click", () => {
+      togglePanel("layout");
+      if (state.openPanel === "layout") {
+        window.setTimeout(() => document.getElementById(CONFIG.keywordInputId)?.focus(), 30);
+      }
+    });
+
+    toolbar.querySelector(".xuc-collector-toggle").addEventListener("click", () => {
+      togglePanel("collector");
+    });
+
+    toolbar.querySelector(`#${CONFIG.searchSubmitId}`).addEventListener("click", runToolbarSearch);
+    toolbar.querySelector(`#${CONFIG.searchInputId}`).addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        runToolbarSearch();
+      }
+    });
+
+    toolbar.querySelector(`#${CONFIG.keywordAddButtonId}`).addEventListener("click", addBlockedKeyword);
+    toolbar.querySelector(`#${CONFIG.keywordInputId}`).addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        addBlockedKeyword();
+      }
+    });
+
+    toolbar.querySelector(`#${CONFIG.widthSliderId}`).addEventListener("input", (event) => {
+      updateTweetWidth(event.target.value);
+    });
+
+    toolbar.querySelectorAll(".xuc-preset-btn").forEach((button) => {
+      button.addEventListener("click", () => {
+        updateTweetWidth(button.dataset.width);
+      });
+    });
+
+    toolbar.querySelector(`#${CONFIG.startButtonId}`).addEventListener("click", () => {
       runCollection().catch((error) => {
         console.error("[X Collector] runCollection failed:", error);
         state.running = false;
@@ -837,52 +1515,99 @@
       });
     });
 
-    document.getElementById(CONFIG.stopButtonId).addEventListener("click", stopCollection);
-    document.getElementById(CONFIG.exportJsonButtonId).addEventListener("click", exportJsonOnly);
-    document.getElementById(CONFIG.exportCsvButtonId).addEventListener("click", exportCsvOnly);
-    document.getElementById(CONFIG.exportMdButtonId).addEventListener("click", exportMarkdownOnly);
-    document.getElementById(CONFIG.downloadMediaButtonId).addEventListener("click", () => {
+    toolbar.querySelector(`#${CONFIG.stopButtonId}`).addEventListener("click", stopCollection);
+    toolbar.querySelector(`#${CONFIG.exportJsonButtonId}`).addEventListener("click", exportJsonOnly);
+    toolbar.querySelector(`#${CONFIG.exportCsvButtonId}`).addEventListener("click", exportCsvOnly);
+    toolbar.querySelector(`#${CONFIG.exportMdButtonId}`).addEventListener("click", exportMarkdownOnly);
+    toolbar.querySelector(`#${CONFIG.downloadMediaButtonId}`).addEventListener("click", () => {
       downloadMedia().catch((error) => {
         console.error("[X Collector] downloadMedia failed:", error);
         setStatus(`媒体下载失败: ${error.message}`);
       });
     });
+
+    document.body.appendChild(toolbar);
+    renderKeywordTags();
+    updateWidthControls();
+    updateScopeInfo();
     updateButtons();
+    state.toolbarReady = true;
   }
 
-  function ensurePanel() {
-    const shouldShow = canCollectCurrentPage(window.location.pathname);
-    const existing = document.getElementById(CONFIG.panelId);
-
-    if (!shouldShow) {
-      if (existing) {
-        existing.remove();
-      }
+  function ensureToolbar() {
+    if (!document.body) {
       return;
     }
 
-    if (!existing && document.body) {
-      buildPanel();
-      setStatus(`当前页面: ${getCollectionScope().label}`);
-    } else if (existing && !state.running) {
-      setStatus(`当前页面: ${getCollectionScope().label}`);
-    }
+    buildToolbar();
+    applySidebarState();
+    applyTweetWidth();
+    renderKeywordTags();
+    updateWidthControls();
+    updateScopeInfo();
+    syncPanelVisibility();
   }
 
-  function startRouterWatcher() {
-    setInterval(() => {
-      if (state.currentPath !== window.location.pathname) {
-        state.currentPath = window.location.pathname;
-        ensurePanel();
+  const refreshInterface = debounce(() => {
+    if (state.currentUrl !== window.location.href) {
+      state.currentUrl = window.location.href;
+      if (!state.running) {
+        closePanels();
       }
-    }, 1000);
+    }
+
+    ensureToolbar();
+    applyKeywordFilters();
+    autoExpandTweets();
+    updateButtons();
+  }, 120);
+
+  function installHistoryWatcher() {
+    if (historyWatcherInstalled) {
+      return;
+    }
+
+    historyWatcherInstalled = true;
+    const wrap = (methodName) => {
+      const original = history[methodName];
+      history[methodName] = function wrappedHistoryMethod(...args) {
+        const result = original.apply(this, args);
+        window.setTimeout(refreshInterface, 0);
+        return result;
+      };
+    };
+
+    wrap("pushState");
+    wrap("replaceState");
+    window.addEventListener("popstate", refreshInterface);
+    window.addEventListener("hashchange", refreshInterface);
+    document.addEventListener("click", closePanels);
+  }
+
+  function startDomObserver() {
+    if (!document.body || domObserver) {
+      return;
+    }
+
+    domObserver = new MutationObserver(refreshInterface);
+    domObserver.observe(document.body, {
+      childList: true,
+      subtree: true,
+    });
   }
 
   function bootstrap() {
-    state.currentPath = window.location.pathname;
-    ensurePanel();
-    startRouterWatcher();
+    state.currentUrl = window.location.href;
+    injectAppStyles();
+    ensureToolbar();
+    installHistoryWatcher();
+    startDomObserver();
+    refreshInterface();
   }
 
-  bootstrap();
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bootstrap, { once: true });
+  } else {
+    bootstrap();
+  }
 })();
