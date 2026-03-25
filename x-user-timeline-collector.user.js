@@ -1,14 +1,16 @@
 // ==UserScript==
 // @name         X 用户主页推文采集器
 // @namespace    https://example.local/
-// @version      0.3.0
-// @description  合并宽屏布局、搜索、关键词过滤与时间线采集导出功能的 X userscript。
+// @version      0.4.0
+// @description  合并宽屏布局、搜索、关键词过滤、时间线采集导出与书签同步功能的 X userscript。
 // @author       Codex
 // @match        https://x.com/*
+// @match        https://twitter.com/*
 // @require      https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js
 // @grant        GM_addStyle
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_registerMenuCommand
 // @grant        GM_download
 // @grant        GM_xmlhttpRequest
 // @connect      pbs.twimg.com
@@ -16,7 +18,9 @@
 // @connect      abs.twimg.com
 // @connect      ton.twimg.com
 // @connect      x.com
-// @run-at       document-idle
+// @connect      dl.lqzr.me
+// @connect      lqzr.me
+// @run-at       document-start
 // ==/UserScript==
 
 (function () {
@@ -55,6 +59,12 @@
     scrollDelayMs: 1400,
     settleDelayMs: 1800,
     topResetDelayMs: 1500,
+  };
+
+
+  const BOOKMARK_SYNC_STORAGE_KEYS = {
+    workerUrl: "xuc_bookmark_sync_worker_url",
+    apiKey: "xuc_bookmark_sync_api_key",
   };
 
   function storageGet(key, fallbackValue) {
@@ -122,6 +132,114 @@
     blockedKeywords: normalizeBlockedKeywords(storageGet(CONFIG.blockedKeywordsStorageKey, [])),
     tweetWidth: clampTweetWidth(storageGet(CONFIG.tweetWidthStorageKey, CONFIG.defaultTweetWidth)),
   };
+
+  let notificationContainer = null;
+  let bookmarkSyncHooksInstalled = false;
+  const bookmarkProcessingIds = new Set();
+  const bookmarkSyncedCache = new Set();
+
+  function getBookmarkSyncConfig() {
+    return {
+      workerUrl: storageGet(BOOKMARK_SYNC_STORAGE_KEYS.workerUrl, BOOKMARK_SYNC_DEFAULT_CONFIG.workerUrl),
+      apiKey: storageGet(BOOKMARK_SYNC_STORAGE_KEYS.apiKey, BOOKMARK_SYNC_DEFAULT_CONFIG.apiKey),
+    };
+  }
+
+  function promptBookmarkSyncConfig() {
+    const current = getBookmarkSyncConfig();
+    const workerUrl = window.prompt(
+      "请输入书签同步 Worker URL（例如 https://media-sync-worker.xxx.workers.dev）：",
+      current.workerUrl || ""
+    );
+    if (workerUrl !== null) {
+      storageSet(BOOKMARK_SYNC_STORAGE_KEYS.workerUrl, String(workerUrl).trim().replace(/\/$/, ""));
+    }
+
+    const apiKey = window.prompt("请输入书签同步 API Key：", current.apiKey || "");
+    if (apiKey !== null) {
+      storageSet(BOOKMARK_SYNC_STORAGE_KEYS.apiKey, String(apiKey).trim());
+    }
+
+    showNotification("书签同步配置已保存，刷新页面后生效", "success");
+  }
+
+  function registerMenuCommands() {
+    if (typeof GM_registerMenuCommand !== "function") {
+      return;
+    }
+
+    GM_registerMenuCommand("设置书签同步配置", promptBookmarkSyncConfig);
+  }
+
+  function ensureNotificationContainer() {
+    if (!document.body) {
+      return null;
+    }
+
+    if (notificationContainer && document.body.contains(notificationContainer)) {
+      return notificationContainer;
+    }
+
+    notificationContainer = document.createElement("div");
+    notificationContainer.id = "xuc-notification-container";
+    notificationContainer.style.cssText =
+      "position:fixed;top:16px;right:16px;z-index:2147483647;display:flex;flex-direction:column;gap:8px;pointer-events:none;";
+    document.body.appendChild(notificationContainer);
+    return notificationContainer;
+  }
+
+  function showNotification(text, type = "info", duration = 4000) {
+    if (!document.body) {
+      document.addEventListener("DOMContentLoaded", () => showNotification(text, type, duration), { once: true });
+      return null;
+    }
+
+    const container = ensureNotificationContainer();
+    if (!container) {
+      return null;
+    }
+
+    const colors = {
+      info: "#1d9bf0",
+      success: "#00ba7c",
+      error: "#f4212e",
+      warning: "#ffad1f",
+    };
+
+    const node = document.createElement("div");
+    node.style.cssText = [
+      `background:${colors[type] || colors.info}`,
+      "color:#fff",
+      "padding:10px 16px",
+      "border-radius:10px",
+      "font-size:14px",
+      "font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
+      "box-shadow:0 10px 24px rgba(0,0,0,0.25)",
+      "max-width:360px",
+      "word-break:break-word",
+      "pointer-events:auto",
+      "opacity:0",
+      "transform:translateX(100%)",
+      "transition:opacity 0.3s ease,transform 0.3s ease",
+    ].join(";");
+    node.textContent = text;
+    container.appendChild(node);
+
+    window.requestAnimationFrame(() => {
+      node.style.opacity = "1";
+      node.style.transform = "translateX(0)";
+    });
+
+    if (duration > 0) {
+      window.setTimeout(() => {
+        node.style.opacity = "0";
+        node.style.transform = "translateX(100%)";
+        window.setTimeout(() => node.remove(), 300);
+      }, duration);
+    }
+
+    return node;
+  }
 
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -724,6 +842,343 @@
     setStatus(`图片 ZIP 已生成，共 ${success} 个文件打包成功，失败 ${failed} 个。`);
   }
 
+  function bookmarkApiRequest(path, data) {
+    const config = getBookmarkSyncConfig();
+    if (!config.workerUrl || !config.apiKey) {
+      showNotification("请先设置书签同步 Worker 配置（油猴菜单）", "warning");
+      return Promise.reject(new Error("未配置书签同步 Worker"));
+    }
+
+    return new Promise((resolve, reject) => {
+      if (typeof GM_xmlhttpRequest !== "function") {
+        reject(new Error("当前油猴环境不支持 GM_xmlhttpRequest"));
+        return;
+      }
+
+      GM_xmlhttpRequest({
+        method: "POST",
+        url: `${config.workerUrl}${path}`,
+        headers: {
+          "Content-Type": "application/json",
+          "X-API-Key": config.apiKey,
+        },
+        data: JSON.stringify(data),
+        responseType: "json",
+        timeout: 120000,
+        onload(response) {
+          if (response.status < 200 || response.status >= 300) {
+            reject(new Error(`HTTP ${response.status}: ${response.responseText || ""}`));
+            return;
+          }
+
+          let result = response.response;
+          if (result === null || result === undefined) {
+            try {
+              result = JSON.parse(response.responseText);
+            } catch (error) {
+              reject(new Error(`响应解析失败: ${(response.responseText || "").slice(0, 200)}`));
+              return;
+            }
+          } else if (typeof result === "string") {
+            try {
+              result = JSON.parse(result);
+            } catch (error) {
+              reject(new Error(`JSON 解析失败: ${result.slice(0, 200)}`));
+              return;
+            }
+          }
+
+          resolve(result);
+        },
+        onerror(error) {
+          reject(new Error(`请求失败: ${error.error || error.statusText || "网络错误"}`));
+        },
+        ontimeout() {
+          reject(new Error("请求超时"));
+        },
+      });
+    });
+  }
+
+  function parseBookmarkTweetsFromResponse(data) {
+    const tweets = [];
+
+    try {
+      const timeline = data?.data?.bookmark_timeline_v2?.timeline || data?.data?.bookmarkTimeline?.timeline || null;
+      if (!timeline?.instructions) {
+        return tweets;
+      }
+
+      for (const instruction of timeline.instructions) {
+        const entries = instruction.entries || [];
+        for (const entry of entries) {
+          const tweet = extractBookmarkTweetFromEntry(entry);
+          if (tweet) {
+            tweets.push(tweet);
+          }
+        }
+
+        if (instruction.moduleItems) {
+          for (const item of instruction.moduleItems) {
+            const tweet = extractBookmarkTweetFromItemContent(item?.item?.itemContent);
+            if (tweet) {
+              tweets.push(tweet);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error("[X Collector][BookmarkSync] 解析响应失败:", error);
+    }
+
+    return tweets;
+  }
+
+  function extractBookmarkTweetFromEntry(entry) {
+    if (!entry?.content) {
+      return null;
+    }
+
+    const content = entry.content;
+    if (content.itemContent) {
+      return extractBookmarkTweetFromItemContent(content.itemContent);
+    }
+
+    if (content.items) {
+      for (const item of content.items) {
+        const tweet = extractBookmarkTweetFromItemContent(item?.item?.itemContent);
+        if (tweet) {
+          return tweet;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  function extractBookmarkTweetFromItemContent(itemContent) {
+    if (!itemContent?.tweet_results?.result) {
+      return null;
+    }
+
+    let result = itemContent.tweet_results.result;
+    if (result.__typename === "TweetWithVisibilityResults" && result.tweet) {
+      result = result.tweet;
+    }
+    if (result.__typename === "TweetTombstone") {
+      return null;
+    }
+
+    return normalizeBookmarkTweet(result);
+  }
+
+  function normalizeBookmarkTweet(result) {
+    try {
+      const legacy = result?.legacy;
+      if (!legacy) {
+        return null;
+      }
+
+      const userResult = result?.core?.user_results?.result;
+      const userLegacy = userResult?.legacy;
+      const screenName = userLegacy?.screen_name || "";
+      const media = [];
+      const mediaEntities = legacy.extended_entities?.media || legacy.entities?.media || [];
+
+      for (const item of mediaEntities) {
+        if (item.type === "photo") {
+          let url = item.media_url_https || item.media_url || "";
+          if (url && !url.includes("format=")) {
+            url = `${url}?format=jpg&name=orig`;
+          }
+          media.push({ type: "photo", url });
+          continue;
+        }
+
+        if (item.type === "video" || item.type === "animated_gif") {
+          const variants = (item.video_info?.variants || [])
+            .filter((variant) => variant.content_type === "video/mp4")
+            .sort((left, right) => (right.bitrate || 0) - (left.bitrate || 0));
+          if (!variants.length) {
+            continue;
+          }
+
+          let posterUrl = item.media_url_https || item.media_url || "";
+          if (posterUrl && !posterUrl.includes("format=")) {
+            posterUrl = `${posterUrl}?format=jpg&name=small`;
+          }
+          media.push({
+            type: item.type,
+            url: variants[0].url,
+            poster_url: posterUrl,
+          });
+        }
+      }
+
+      const tweetId = result.rest_id || legacy.id_str || "";
+      return {
+        id: tweetId,
+        text: legacy.full_text || "",
+        author: {
+          id: userResult?.rest_id || "",
+          name: userLegacy?.name || "",
+          screen_name: screenName,
+        },
+        created_at: legacy.created_at || "",
+        url: screenName && tweetId ? `https://x.com/${screenName}/status/${tweetId}` : "",
+        media,
+      };
+    } catch (error) {
+      console.error("[X Collector][BookmarkSync] 解析单条推文失败:", error);
+      return null;
+    }
+  }
+
+  async function syncBookmarkTweets(tweets) {
+    if (!tweets.length) {
+      return;
+    }
+
+    const newTweets = tweets.filter((tweet) => !bookmarkProcessingIds.has(tweet.id) && !bookmarkSyncedCache.has(tweet.id));
+    if (!newTweets.length) {
+      return;
+    }
+
+    newTweets.forEach((tweet) => bookmarkProcessingIds.add(tweet.id));
+
+    try {
+      const ids = newTweets.map((tweet) => tweet.id);
+      const checkResult = await bookmarkApiRequest("/api/twitter/check", { ids });
+      (checkResult.synced || []).forEach((id) => bookmarkSyncedCache.add(id));
+
+      const unsyncedIds = new Set(checkResult.unsynced || []);
+      const toSync = newTweets.filter((tweet) => unsyncedIds.has(tweet.id));
+      if (!toSync.length) {
+        showNotification(`书签已是最新（${ids.length} 条已同步）`, "success", 2000);
+        return;
+      }
+
+      showNotification(`发现 ${toSync.length} 条新书签，开始同步...`, "info", 2500);
+
+      const batchSize = 5;
+      let totalSynced = 0;
+      let totalFailed = 0;
+
+      for (let index = 0; index < toSync.length; index += batchSize) {
+        const batch = toSync.slice(index, index + batchSize);
+        const batchNumber = Math.floor(index / batchSize) + 1;
+        const batchTotal = Math.ceil(toSync.length / batchSize);
+        showNotification(`书签同步中 ${batchNumber}/${batchTotal}...`, "info", 2000);
+
+        try {
+          const syncResult = await bookmarkApiRequest("/api/twitter/sync", { tweets: batch });
+          for (const item of syncResult.results || []) {
+            if (item.success) {
+              totalSynced += 1;
+              bookmarkSyncedCache.add(item.tweet_id);
+            } else {
+              totalFailed += 1;
+              console.error("[X Collector][BookmarkSync] 同步失败:", item.tweet_id, item.error);
+            }
+          }
+        } catch (error) {
+          totalFailed += batch.length;
+          console.error("[X Collector][BookmarkSync] 批量同步失败:", error);
+        }
+      }
+
+      if (totalFailed === 0) {
+        showNotification(`书签同步完成：${totalSynced} 条已保存`, "success");
+      } else {
+        showNotification(
+          `书签同步完成：${totalSynced} 成功，${totalFailed} 失败`,
+          totalSynced > 0 ? "warning" : "error"
+        );
+      }
+    } catch (error) {
+      console.error("[X Collector][BookmarkSync] 同步流程异常:", error);
+      showNotification(`书签同步失败: ${error.message}`, "error");
+    } finally {
+      newTweets.forEach((tweet) => bookmarkProcessingIds.delete(tweet.id));
+    }
+  }
+
+  function handleBookmarkGraphqlPayload(data, sourceLabel) {
+    const tweets = parseBookmarkTweetsFromResponse(data);
+    if (!tweets.length) {
+      return;
+    }
+
+    console.log(`[X Collector][BookmarkSync] ${sourceLabel} 捕获到 ${tweets.length} 条书签`);
+    syncBookmarkTweets(tweets).catch((error) => {
+      console.error("[X Collector][BookmarkSync] 同步失败:", error);
+    });
+  }
+
+  function installBookmarkSyncHooks() {
+    if (bookmarkSyncHooksInstalled) {
+      return;
+    }
+    bookmarkSyncHooksInstalled = true;
+
+    const originalFetch = window.fetch;
+    if (typeof originalFetch === "function") {
+      window.fetch = async function bookmarkSyncFetchWrapper(...args) {
+        const response = await originalFetch.apply(this, args);
+
+        try {
+          const url = typeof args[0] === "string" ? args[0] : args[0]?.url || "";
+          if (url.includes("/graphql/") && url.includes("Bookmark")) {
+            response
+              .clone()
+              .json()
+              .then((data) => handleBookmarkGraphqlPayload(data, "fetch"))
+              .catch((error) => {
+                console.error("[X Collector][BookmarkSync] fetch 响应解析失败:", error);
+              });
+          }
+        } catch (error) {
+          console.error("[X Collector][BookmarkSync] fetch 拦截异常:", error);
+        }
+
+        return response;
+      };
+    }
+
+    const originalXhrOpen = XMLHttpRequest.prototype.open;
+    const originalXhrSend = XMLHttpRequest.prototype.send;
+
+    XMLHttpRequest.prototype.open = function bookmarkSyncXhrOpen(method, url, ...rest) {
+      this.__xucBookmarkSyncUrl = url;
+      return originalXhrOpen.apply(this, [method, url, ...rest]);
+    };
+
+    XMLHttpRequest.prototype.send = function bookmarkSyncXhrSend(...args) {
+      if (this.__xucBookmarkSyncUrl && this.__xucBookmarkSyncUrl.includes("/graphql/") && this.__xucBookmarkSyncUrl.includes("Bookmark")) {
+        this.addEventListener("load", function onBookmarkSyncLoad() {
+          try {
+            const data = JSON.parse(this.responseText);
+            handleBookmarkGraphqlPayload(data, "xhr");
+          } catch (error) {
+            console.error("[X Collector][BookmarkSync] XHR 响应解析失败:", error);
+          }
+        });
+      }
+
+      return originalXhrSend.apply(this, args);
+    };
+  }
+
+  function initBookmarkSync() {
+    const config = getBookmarkSyncConfig();
+    if (!config.workerUrl || !config.apiKey) {
+      showNotification("书签同步未配置，请在油猴菜单中设置 Worker 配置", "warning", 6000);
+      return;
+    }
+
+    console.log("[X Collector][BookmarkSync] 已启动，等待书签时间线请求...");
+  }
+
   function setStatus(message) {
     const node = document.getElementById(CONFIG.statusId);
     if (node) {
@@ -995,8 +1450,8 @@
       }
 
       #${CONFIG.toolbarId} .xuc-toolbar-btn svg {
-        width: 22px !important;
-        height: 22px !important;
+        width: 24px !important;
+        height: 24px !important;
         fill: currentColor !important;
       }
 
@@ -1366,22 +1821,22 @@
     return {
       menu: `
         <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"></path>
+          <path d="M5.5 6A1.5 1.5 0 0 1 7 4.5h11A1.5 1.5 0 0 1 19.5 6 1.5 1.5 0 0 1 18 7.5H7A1.5 1.5 0 0 1 5.5 6zm-2 6A1.5 1.5 0 0 1 5 10.5h13A1.5 1.5 0 0 1 19.5 12 1.5 1.5 0 0 1 18 13.5H5A1.5 1.5 0 0 1 3.5 12zm4 6A1.5 1.5 0 0 1 9 16.5h9a1.5 1.5 0 0 1 0 3H9A1.5 1.5 0 0 1 7.5 18z"></path>
         </svg>
       `,
       search: `
         <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M10.25 3.75a6.5 6.5 0 1 0 4.58 11.12l4.65 4.66 1.41-1.42-4.65-4.65a6.5 6.5 0 0 0-5.99-9.71zm0 2a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9z"></path>
+          <path d="M10.5 4a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zm0 2.5a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm5.2 8.44 1.77-1.77 4.03 4.03a1.25 1.25 0 1 1-1.77 1.77l-4.03-4.03z"></path>
         </svg>
       `,
       layout: `
         <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M10 6h10V4H10v2zM4 7.5A1.5 1.5 0 1 0 4 4.5a1.5 1.5 0 0 0 0 3zm10 6h6v-2h-6v2zM4 14.5A1.5 1.5 0 1 0 4 11.5a1.5 1.5 0 0 0 0 3zm6 5h10v-2H10v2zM4 20.5A1.5 1.5 0 1 0 4 17.5a1.5 1.5 0 0 0 0 3z"></path>
+          <path d="M6 5.25A2.75 2.75 0 1 1 6 10.75 2.75 2.75 0 0 1 6 5.25zm5.5 1.25h7A1.25 1.25 0 0 1 19.75 7.75 1.25 1.25 0 0 1 18.5 9h-7a1.25 1.25 0 1 1 0-2.5zM18 13.25a2.75 2.75 0 1 1 0 5.5 2.75 2.75 0 0 1 0-5.5zm-12.5 1.25h7A1.25 1.25 0 0 1 13.75 15.75 1.25 1.25 0 0 1 12.5 17h-7a1.25 1.25 0 1 1 0-2.5z"></path>
         </svg>
       `,
       collector: `
         <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M12 3a1 1 0 0 1 1 1v8.59l2.3-2.29 1.4 1.41-4.7 4.7-4.7-4.7 1.4-1.41 2.3 2.29V4a1 1 0 0 1 1-1zm-7 14h14v2a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-2z"></path>
+          <path d="M12 3.5A1.5 1.5 0 0 1 13.5 5v6.88l1.72-1.72a1.25 1.25 0 1 1 1.76 1.76l-3.85 3.85a1.6 1.6 0 0 1-2.26 0l-3.85-3.85a1.25 1.25 0 1 1 1.76-1.76l1.72 1.72V5A1.5 1.5 0 0 1 12 3.5zm-7.5 13A1.5 1.5 0 0 1 6 15h12a1.5 1.5 0 0 1 1.5 1.5V18A2.5 2.5 0 0 1 17 20.5H7A2.5 2.5 0 0 1 4.5 18v-1.5z"></path>
         </svg>
       `,
     };
@@ -1596,12 +2051,16 @@
     });
   }
 
+  registerMenuCommands();
+  installBookmarkSyncHooks();
+
   function bootstrap() {
     state.currentUrl = window.location.href;
     injectAppStyles();
     ensureToolbar();
     installHistoryWatcher();
     startDomObserver();
+    initBookmarkSync();
     refreshInterface();
   }
 
