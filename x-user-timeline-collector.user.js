@@ -26,6 +26,7 @@
     stopButtonId: "x-tweet-collector-stop",
     exportJsonButtonId: "x-tweet-collector-export-json",
     exportCsvButtonId: "x-tweet-collector-export-csv",
+    exportMdButtonId: "x-tweet-collector-export-md",
     downloadMediaButtonId: "x-tweet-collector-download-media",
     maxIdleRounds: 8,
     maxScrollRounds: 400,
@@ -390,6 +391,68 @@
     return lines.join("\r\n");
   }
 
+  function buildMarkdown(rows) {
+    const scope = getCollectionScope();
+    const now = new Date().toISOString();
+    const lines = [];
+
+    lines.push(`# X 推文采集导出`);
+    lines.push("");
+    lines.push(`- 采集范围: ${scope.label}`);
+    lines.push(`- 导出时间: ${now}`);
+    lines.push(`- 推文数量: ${rows.length}`);
+    lines.push(`- 数据用途: 供 AI 做主题分析、情绪分析、事件梳理、观点归纳`);
+    lines.push("");
+    lines.push(`## 数据说明`);
+    lines.push("");
+    lines.push(`- \`isRepost\`: 是否为转发内容`);
+    lines.push(`- \`quotedText\`: 引用推文正文，若无则为空`);
+    lines.push(`- \`mediaUrls\`: 当前卡片里可提取到的媒体链接`);
+    lines.push("");
+    lines.push(`## 推文列表`);
+    lines.push("");
+
+    rows.forEach((row, index) => {
+      lines.push(`### ${index + 1}. ${row.authorName || row.authorHandle || "Unknown"}${row.authorHandle ? ` (@${row.authorHandle})` : ""}`);
+      lines.push("");
+      lines.push(`- tweetId: \`${row.tweetId}\``);
+      lines.push(`- publishedAt: ${row.publishedAt || ""}`);
+      lines.push(`- capturedAt: ${row.capturedAt || ""}`);
+      lines.push(`- isRepost: ${row.isRepost ? "true" : "false"}`);
+      lines.push(`- url: ${row.url || ""}`);
+      lines.push(`- replies: ${row.replies || ""}`);
+      lines.push(`- reposts: ${row.reposts || ""}`);
+      lines.push(`- likes: ${row.likes || ""}`);
+      lines.push(`- views: ${row.views || ""}`);
+      lines.push("");
+      lines.push(`#### 正文`);
+      lines.push("");
+      lines.push(row.text ? row.text : `（无正文，可能是纯视频帖或主页流未展开正文）`);
+      lines.push("");
+
+      if (row.quotedText) {
+        lines.push(`#### 引用内容`);
+        lines.push("");
+        lines.push(row.quotedText);
+        lines.push("");
+      }
+
+      if (row.mediaUrls && row.mediaUrls.length) {
+        lines.push(`#### 媒体链接`);
+        lines.push("");
+        row.mediaUrls.forEach((mediaUrl) => {
+          lines.push(`- ${mediaUrl}`);
+        });
+        lines.push("");
+      }
+
+      lines.push(`---`);
+      lines.push("");
+    });
+
+    return lines.join("\n");
+  }
+
   function triggerDownload(filename, content, mimeType) {
     const blob = content instanceof Blob ? content : new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
@@ -437,6 +500,17 @@
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const csvName = `x-${handle}-tweets-${stamp}.csv`;
     triggerDownload(csvName, buildCsv(state.tweets), "text/csv;charset=utf-8");
+  }
+
+  function exportMarkdownOnly() {
+    if (!state.tweets.length) {
+      window.alert("当前没有可导出的采集结果。");
+      return;
+    }
+    const handle = sanitizeFilePart(getCollectionScope().key);
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const mdName = `x-${handle}-tweets-${stamp}.md`;
+    triggerDownload(mdName, buildMarkdown(state.tweets), "text/markdown;charset=utf-8");
   }
 
   function getExtensionFromUrl(url) {
@@ -584,6 +658,7 @@
     const stopButton = document.getElementById(CONFIG.stopButtonId);
     const exportJsonButton = document.getElementById(CONFIG.exportJsonButtonId);
     const exportCsvButton = document.getElementById(CONFIG.exportCsvButtonId);
+    const exportMdButton = document.getElementById(CONFIG.exportMdButtonId);
     const downloadMediaButton = document.getElementById(CONFIG.downloadMediaButtonId);
 
     if (startButton) {
@@ -598,6 +673,9 @@
     }
     if (exportCsvButton) {
       exportCsvButton.disabled = state.running || !state.tweets.length;
+    }
+    if (exportMdButton) {
+      exportMdButton.disabled = state.running || !state.tweets.length;
     }
     if (downloadMediaButton) {
       downloadMediaButton.disabled = state.running || !state.tweets.length;
@@ -687,27 +765,28 @@
     const panel = document.createElement("div");
     panel.id = CONFIG.panelId;
     panel.innerHTML = `
-      <div style="font-weight:700;margin-bottom:8px;">X 推文采集</div>
+      <div style="font-weight:700;margin-bottom:6px;">X 推文采集</div>
       <button id="${CONFIG.startButtonId}" type="button">采集推文</button>
       <button id="${CONFIG.stopButtonId}" type="button">停止</button>
       <button id="${CONFIG.exportJsonButtonId}" type="button">导出 JSON</button>
       <button id="${CONFIG.exportCsvButtonId}" type="button">导出 CSV</button>
+      <button id="${CONFIG.exportMdButtonId}" type="button">导出 Markdown</button>
       <button id="${CONFIG.downloadMediaButtonId}" type="button">下载图片 ZIP</button>
-      <div id="${CONFIG.statusId}" style="margin-top:8px;line-height:1.45;">等待开始</div>
+      <div id="${CONFIG.statusId}" style="margin-top:6px;line-height:1.35;">等待开始</div>
     `;
 
     Object.assign(panel.style, {
       position: "fixed",
-      right: "18px",
-      bottom: "18px",
+      right: "12px",
+      bottom: "12px",
       zIndex: "2147483647",
-      width: "280px",
-      padding: "12px",
-      borderRadius: "12px",
+      width: "220px",
+      padding: "9px",
+      borderRadius: "10px",
       background: "rgba(15, 20, 25, 0.92)",
       color: "#fff",
       boxShadow: "0 8px 30px rgba(0, 0, 0, 0.35)",
-      fontSize: "13px",
+      fontSize: "12px",
       fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
       backdropFilter: "blur(8px)",
     });
@@ -715,15 +794,16 @@
     const style = document.createElement("style");
     style.textContent = `
       #${CONFIG.panelId} button {
-        margin-right: 8px;
-        margin-bottom: 6px;
-        padding: 8px 10px;
+        margin-right: 6px;
+        margin-bottom: 5px;
+        padding: 6px 8px;
         border: 0;
-        border-radius: 8px;
+        border-radius: 7px;
         background: #1d9bf0;
         color: #fff;
         cursor: pointer;
-        font-size: 13px;
+        font-size: 12px;
+        line-height: 1.2;
       }
 
       #${CONFIG.panelId} button:last-of-type {
@@ -732,6 +812,7 @@
 
       #${CONFIG.exportJsonButtonId},
       #${CONFIG.exportCsvButtonId},
+      #${CONFIG.exportMdButtonId},
       #${CONFIG.downloadMediaButtonId} {
         background: #15202b;
         border: 1px solid rgba(255, 255, 255, 0.14);
@@ -759,6 +840,7 @@
     document.getElementById(CONFIG.stopButtonId).addEventListener("click", stopCollection);
     document.getElementById(CONFIG.exportJsonButtonId).addEventListener("click", exportJsonOnly);
     document.getElementById(CONFIG.exportCsvButtonId).addEventListener("click", exportCsvOnly);
+    document.getElementById(CONFIG.exportMdButtonId).addEventListener("click", exportMarkdownOnly);
     document.getElementById(CONFIG.downloadMediaButtonId).addEventListener("click", () => {
       downloadMedia().catch((error) => {
         console.error("[X Collector] downloadMedia failed:", error);
