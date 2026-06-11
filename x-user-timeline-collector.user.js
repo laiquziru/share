@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X 用户主页推文采集器
 // @namespace    https://example.local/
-// @version      0.4.0
+// @version      0.6.0
 // @description  合并宽屏布局、搜索、关键词过滤、时间线采集导出与书签同步功能的 X userscript。
 // @author       Codex
 // @match        https://x.com/*
@@ -11,8 +11,8 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
-// @grant        GM_download
 // @grant        GM_xmlhttpRequest
+// @grant        unsafeWindow
 // @connect      pbs.twimg.com
 // @connect      video.twimg.com
 // @connect      abs.twimg.com
@@ -26,6 +26,9 @@
 (function () {
   "use strict";
 
+  if (window.__xMergedCollectorActive) {
+    return;
+  }
   window.__xMergedCollectorActive = true;
 
   const CONFIG = {
@@ -39,6 +42,12 @@
     exportCsvButtonId: "x-tweet-collector-export-csv",
     exportMdButtonId: "x-tweet-collector-export-md",
     downloadMediaButtonId: "x-tweet-collector-download-media",
+    syncConfigButtonId: "x-tweet-collector-sync-config",
+    syncWidgetId: "xuc-bookmark-sync-widget",
+    fontSizeSliderId: "x-toolbar-font-size-slider",
+    fontSizeValueId: "x-toolbar-font-size-value",
+    lineHeightSliderId: "x-toolbar-line-height-slider",
+    lineHeightValueId: "x-toolbar-line-height-value",
     searchInputId: "x-toolbar-search-input",
     searchSubmitId: "x-toolbar-search-submit",
     keywordInputId: "x-toolbar-keyword-input",
@@ -49,6 +58,12 @@
     sidebarStorageKey: "xuc_sidebar_visible",
     blockedKeywordsStorageKey: "xuc_blocked_keywords",
     tweetWidthStorageKey: "xuc_tweet_width",
+    themeStorageKey: "xuc_theme",
+    fontSizeStorageKey: "xuc_font_size",
+    lineHeightStorageKey: "xuc_line_height",
+    serifStorageKey: "xuc_serif",
+    focusModeStorageKey: "xuc_focus_mode",
+    dimReadStorageKey: "xuc_dim_read",
     minTweetWidth: 500,
     maxTweetWidth: 1400,
     defaultTweetWidth: 900,
@@ -59,6 +74,15 @@
     scrollDelayMs: 1400,
     settleDelayMs: 1800,
     topResetDelayMs: 1500,
+  };
+
+  const TWEET_SELECTOR = 'article[data-testid="tweet"]';
+  const BOOKMARK_SYNC_HOOK_FLAGS = {
+    fetch: "__xucBookmarkSyncFetchWrapped",
+    xhrOpen: "__xucBookmarkSyncXhrOpenWrapped",
+    xhrSend: "__xucBookmarkSyncXhrSendWrapped",
+    historyPushState: "__xucHistoryPushStateWrapped",
+    historyReplaceState: "__xucHistoryReplaceStateWrapped",
   };
 
 
@@ -120,6 +144,29 @@
       .filter((item, index, list) => list.indexOf(item) === index);
   }
 
+  const THEMES = ["paper", "green", "dim", "oled"];
+
+  function normalizeTheme(value) {
+    return THEMES.includes(value) ? value : "";
+  }
+
+  // 字号/行距返回 0 表示不覆盖 X 默认值
+  function clampFontSize(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric < 14 || numeric > 20) {
+      return 0;
+    }
+    return Math.round(numeric);
+  }
+
+  function clampLineHeight(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric < 1.3 || numeric > 2) {
+      return 0;
+    }
+    return Math.round(numeric * 10) / 10;
+  }
+
   const state = {
     running: false,
     tweets: [],
@@ -131,6 +178,14 @@
     sidebarVisible: Boolean(storageGet(CONFIG.sidebarStorageKey, false)),
     blockedKeywords: normalizeBlockedKeywords(storageGet(CONFIG.blockedKeywordsStorageKey, [])),
     tweetWidth: clampTweetWidth(storageGet(CONFIG.tweetWidthStorageKey, CONFIG.defaultTweetWidth)),
+    keywordSignature: "",
+    theme: normalizeTheme(storageGet(CONFIG.themeStorageKey, "")),
+    fontSize: clampFontSize(storageGet(CONFIG.fontSizeStorageKey, 0)),
+    lineHeight: clampLineHeight(storageGet(CONFIG.lineHeightStorageKey, 0)),
+    serifFont: Boolean(storageGet(CONFIG.serifStorageKey, false)),
+    focusMode: Boolean(storageGet(CONFIG.focusModeStorageKey, false)),
+    dimRead: Boolean(storageGet(CONFIG.dimReadStorageKey, false)),
+    readTweetIds: new Set(),
   };
 
   let notificationContainer = null;
@@ -140,27 +195,66 @@
 
   function getBookmarkSyncConfig() {
     return {
-      workerUrl: storageGet(BOOKMARK_SYNC_STORAGE_KEYS.workerUrl, BOOKMARK_SYNC_DEFAULT_CONFIG.workerUrl),
-      apiKey: storageGet(BOOKMARK_SYNC_STORAGE_KEYS.apiKey, BOOKMARK_SYNC_DEFAULT_CONFIG.apiKey),
+      workerUrl: String(storageGet(BOOKMARK_SYNC_STORAGE_KEYS.workerUrl, "") || "").trim().replace(/\/$/, ""),
+      apiKey: String(storageGet(BOOKMARK_SYNC_STORAGE_KEYS.apiKey, "") || "").trim(),
     };
   }
 
-  function promptBookmarkSyncConfig() {
+  function showBookmarkSyncConfigDialog() {
+    // X 页面会拦截 window.prompt，必须用自绘弹窗
+    const existingMask = document.getElementById("xuc-sync-config-mask");
+    if (existingMask) {
+      existingMask.remove();
+    }
+
     const current = getBookmarkSyncConfig();
-    const workerUrl = window.prompt(
-      "请输入书签同步 Worker URL（例如 https://media-sync-worker.xxx.workers.dev）：",
-      current.workerUrl || ""
-    );
-    if (workerUrl !== null) {
-      storageSet(BOOKMARK_SYNC_STORAGE_KEYS.workerUrl, String(workerUrl).trim().replace(/\/$/, ""));
-    }
+    const mask = document.createElement("div");
+    mask.id = "xuc-sync-config-mask";
+    mask.style.cssText =
+      "position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;";
 
-    const apiKey = window.prompt("请输入书签同步 API Key：", current.apiKey || "");
-    if (apiKey !== null) {
-      storageSet(BOOKMARK_SYNC_STORAGE_KEYS.apiKey, String(apiKey).trim());
-    }
+    const dialog = document.createElement("div");
+    dialog.style.cssText =
+      "width:min(440px,calc(100vw - 32px));background:#15202b;color:#e7e9ea;border:1px solid rgba(255,255,255,0.12);border-radius:16px;padding:20px;box-shadow:0 18px 40px rgba(0,0,0,0.4);";
+    dialog.innerHTML = `
+      <div style="font-size:16px;font-weight:700;margin-bottom:14px;">书签同步配置</div>
+      <label style="display:block;font-size:12px;color:#8b98a5;margin-bottom:6px;">Worker URL</label>
+      <input id="xuc-sync-worker-input" type="text" placeholder="https://media-sync-worker.xxx.workers.dev"
+        style="width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #2f3336;border-radius:10px;background:#0f1419;color:#fff;outline:none;margin-bottom:12px;" />
+      <label style="display:block;font-size:12px;color:#8b98a5;margin-bottom:6px;">API Key</label>
+      <input id="xuc-sync-key-input" type="password" placeholder="Worker 端校验密钥"
+        style="width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #2f3336;border-radius:10px;background:#0f1419;color:#fff;outline:none;margin-bottom:8px;" />
+      <div style="font-size:12px;color:#8b98a5;line-height:1.5;margin-bottom:14px;">两项均填写后书签同步才会工作；保存后刷新页面生效。若 Worker 域名不在脚本 @connect 列表中，请求时油猴会弹授权确认。</div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;">
+        <button id="xuc-sync-cancel" type="button" style="padding:8px 16px;border:1px solid rgba(255,255,255,0.14);border-radius:10px;background:#15202b;color:#fff;cursor:pointer;">取消</button>
+        <button id="xuc-sync-save" type="button" style="padding:8px 16px;border:none;border-radius:10px;background:#1d9bf0;color:#fff;cursor:pointer;">保存</button>
+      </div>
+    `;
 
-    showNotification("书签同步配置已保存，刷新页面后生效", "success");
+    mask.appendChild(dialog);
+    document.body.appendChild(mask);
+
+    const workerInput = dialog.querySelector("#xuc-sync-worker-input");
+    const keyInput = dialog.querySelector("#xuc-sync-key-input");
+    workerInput.value = current.workerUrl;
+    keyInput.value = current.apiKey;
+
+    const close = () => mask.remove();
+    mask.addEventListener("click", (event) => {
+      if (event.target === mask) {
+        close();
+      }
+    });
+    dialog.addEventListener("click", (event) => event.stopPropagation());
+    dialog.querySelector("#xuc-sync-cancel").addEventListener("click", close);
+    dialog.querySelector("#xuc-sync-save").addEventListener("click", () => {
+      storageSet(BOOKMARK_SYNC_STORAGE_KEYS.workerUrl, String(workerInput.value).trim().replace(/\/$/, ""));
+      storageSet(BOOKMARK_SYNC_STORAGE_KEYS.apiKey, String(keyInput.value).trim());
+      close();
+      showNotification("书签同步配置已保存，刷新页面后生效", "success");
+    });
+
+    window.setTimeout(() => workerInput.focus(), 30);
   }
 
   function registerMenuCommands() {
@@ -168,7 +262,7 @@
       return;
     }
 
-    GM_registerMenuCommand("设置书签同步配置", promptBookmarkSyncConfig);
+    GM_registerMenuCommand("设置书签同步配置", showBookmarkSyncConfigDialog);
   }
 
   function ensureNotificationContainer() {
@@ -326,7 +420,11 @@
   }
 
   function csvEscape(value) {
-    const text = String(value ?? "");
+    let text = String(value ?? "");
+    // 推文文本不可信，防止 Excel 公式注入
+    if (/^[=+@\t\r]/.test(text)) {
+      text = `'${text}`;
+    }
     return `"${text.replace(/"/g, '""')}"`;
   }
 
@@ -335,8 +433,8 @@
       return "";
     }
 
-    const match = String(label).match(/([\d,.]+(?:[KMB])?)/i);
-    return match ? match[1] : "";
+    const match = String(label).match(/([\d,.]+\s*(?:[KMB]|万|亿)?)/i);
+    return match ? match[1].replace(/\s+/g, "") : "";
   }
 
   function getArticleTimeAnchor(article) {
@@ -375,7 +473,7 @@
   }
 
   function getAuthorInfo(article, tweetUrl) {
-    const urlMatch = String(tweetUrl).match(/x\.com\/([^/]+)\/status\/\d+/i);
+    const urlMatch = String(tweetUrl).match(/(?:x|twitter)\.com\/([^/]+)\/status\/\d+/i);
     const handleFromUrl = urlMatch ? urlMatch[1] : "";
     const timeAnchor = getArticleTimeAnchor(article);
     const authorContainer =
@@ -405,7 +503,7 @@
     if (!textNodes.length) {
       return "";
     }
-    return (textNodes[0].innerText || "").trim();
+    return (textNodes[0].textContent || "").trim();
   }
 
   function getQuotedText(article) {
@@ -415,9 +513,23 @@
     }
     return textNodes
       .slice(1)
-      .map((node) => (node.innerText || "").trim())
+      .map((node) => (node.textContent || "").trim())
       .filter(Boolean)
       .join("\n---\n");
+  }
+
+  function upgradeImageUrl(url) {
+    // pbs.twimg.com 的图片 src 通常是缩略图（name=small/900x900），改写为原图
+    try {
+      const parsed = new URL(url);
+      if (parsed.hostname === "pbs.twimg.com" && parsed.pathname.startsWith("/media/")) {
+        parsed.searchParams.set("name", "orig");
+        return parsed.href;
+      }
+    } catch {
+      // 非法 URL 原样返回
+    }
+    return url;
   }
 
   function getMediaUrls(article) {
@@ -425,7 +537,7 @@
 
     Array.from(article.querySelectorAll('a[href*="/photo/"] img[src]')).forEach((img) => {
       if (img.src) {
-        urls.add(img.src);
+        urls.add(upgradeImageUrl(img.src));
       }
     });
 
@@ -433,11 +545,12 @@
       if (video.poster) {
         urls.add(video.poster);
       }
-      if (video.currentSrc) {
+      // X 的视频流是 blob: URL，导出后无法访问，跳过
+      if (video.currentSrc && !video.currentSrc.startsWith("blob:")) {
         urls.add(video.currentSrc);
       }
       Array.from(video.querySelectorAll("source")).forEach((source) => {
-        if (source.src) {
+        if (source.src && !source.src.startsWith("blob:")) {
           urls.add(source.src);
         }
       });
@@ -445,7 +558,7 @@
 
     Array.from(article.querySelectorAll('img[src*="pbs.twimg.com/media"]')).forEach((img) => {
       if (img.src) {
-        urls.add(img.src);
+        urls.add(upgradeImageUrl(img.src));
       }
     });
 
@@ -453,30 +566,25 @@
   }
 
   function getMetricMap(article) {
+    // 通过 data-testid 定位按钮，避免依赖界面语言（aria-label 在中文界面下是「回复」「喜欢」）
+    const readMetric = (testId) => {
+      const button = article.querySelector(`button[data-testid="${testId}"]`);
+      if (!button) {
+        return "";
+      }
+      return parseCount((button.textContent || "").trim()) || parseCount(button.getAttribute("aria-label") || "");
+    };
+
     const metricMap = {
-      replies: "",
-      reposts: "",
-      likes: "",
+      replies: readMetric("reply"),
+      reposts: readMetric("retweet"),
+      likes: readMetric("like"),
       views: "",
     };
 
-    const buttonLabels = Array.from(article.querySelectorAll("button"))
-      .map((button) => button.getAttribute("aria-label") || "")
-      .filter(Boolean);
-
-    buttonLabels.forEach((label) => {
-      if (/Replies?/.test(label)) {
-        metricMap.replies = parseCount(label);
-      } else if (/reposts?/i.test(label)) {
-        metricMap.reposts = parseCount(label);
-      } else if (/Likes?/.test(label)) {
-        metricMap.likes = parseCount(label);
-      }
-    });
-
     const analyticsAnchor = article.querySelector('a[href$="/analytics"]');
     if (analyticsAnchor) {
-      metricMap.views = parseCount(analyticsAnchor.innerText || analyticsAnchor.getAttribute("aria-label") || "");
+      metricMap.views = parseCount(analyticsAnchor.textContent || analyticsAnchor.getAttribute("aria-label") || "");
     }
 
     return metricMap;
@@ -492,7 +600,6 @@
     const { handle: authorHandle, name: authorName } = getAuthorInfo(article, url);
     const timeNode = article.querySelector("time");
     const metrics = getMetricMap(article);
-    const rawText = (article.innerText || "").trim();
 
     return {
       tweetId,
@@ -510,13 +617,12 @@
       reposts: metrics.reposts,
       likes: metrics.likes,
       views: metrics.views,
-      rawText,
     };
   }
 
   function collectVisibleTweets() {
     const targetHandle = getCollectionScope().mode === "profile" ? getTargetHandle() : "";
-    const articles = Array.from(document.querySelectorAll("article"));
+    const articles = Array.from(document.querySelectorAll(TWEET_SELECTOR));
     let newCount = 0;
 
     for (const article of articles) {
@@ -584,7 +690,8 @@
       );
     }
 
-    return lines.join("\r\n");
+    // UTF-8 BOM，避免 Excel 打开中文乱码
+    return String.fromCharCode(0xfeff) + lines.join("\r\n");
   }
 
   function buildMarkdown(rows) {
@@ -659,21 +766,6 @@
     anchor.click();
     anchor.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1500);
-  }
-
-  function exportAll() {
-    if (!state.tweets.length) {
-      window.alert("当前没有可导出的采集结果。");
-      return;
-    }
-
-    const handle = sanitizeFilePart(getCollectionScope().key);
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const jsonName = `x-${handle}-tweets-${stamp}.json`;
-    const csvName = `x-${handle}-tweets-${stamp}.csv`;
-
-    triggerDownload(jsonName, JSON.stringify(state.tweets, null, 2), "application/json;charset=utf-8");
-    triggerDownload(csvName, buildCsv(state.tweets), "text/csv;charset=utf-8");
   }
 
   function exportJsonOnly() {
@@ -1048,16 +1140,19 @@
 
     try {
       const ids = newTweets.map((tweet) => tweet.id);
+      setSyncStatus("syncing", `校验 ${ids.length} 条书签...`);
       const checkResult = await bookmarkApiRequest("/api/twitter/check", { ids });
       (checkResult.synced || []).forEach((id) => bookmarkSyncedCache.add(id));
 
       const unsyncedIds = new Set(checkResult.unsynced || []);
       const toSync = newTweets.filter((tweet) => unsyncedIds.has(tweet.id));
       if (!toSync.length) {
+        setSyncStatus("ok", `书签已是最新（${ids.length} 条已同步）`);
         showNotification(`书签已是最新（${ids.length} 条已同步）`, "success", 2000);
         return;
       }
 
+      setSyncStatus("syncing", `发现 ${toSync.length} 条新书签，同步中...`);
       showNotification(`发现 ${toSync.length} 条新书签，开始同步...`, "info", 2500);
 
       const batchSize = 5;
@@ -1068,6 +1163,7 @@
         const batch = toSync.slice(index, index + batchSize);
         const batchNumber = Math.floor(index / batchSize) + 1;
         const batchTotal = Math.ceil(toSync.length / batchSize);
+        setSyncStatus("syncing", `书签同步中 ${batchNumber}/${batchTotal}...`);
         showNotification(`书签同步中 ${batchNumber}/${batchTotal}...`, "info", 2000);
 
         try {
@@ -1087,9 +1183,12 @@
         }
       }
 
+      bookmarkSyncStatus.failed += totalFailed;
       if (totalFailed === 0) {
+        setSyncStatus("ok", `同步完成：${totalSynced} 条已保存`);
         showNotification(`书签同步完成：${totalSynced} 条已保存`, "success");
       } else {
+        setSyncStatus("error", `同步完成：${totalSynced} 成功，${totalFailed} 失败`);
         showNotification(
           `书签同步完成：${totalSynced} 成功，${totalFailed} 失败`,
           totalSynced > 0 ? "warning" : "error"
@@ -1097,6 +1196,7 @@
       }
     } catch (error) {
       console.error("[X Collector][BookmarkSync] 同步流程异常:", error);
+      setSyncStatus("error", `同步失败: ${error.message}`);
       showNotification(`书签同步失败: ${error.message}`, "error");
     } finally {
       newTweets.forEach((tweet) => bookmarkProcessingIds.delete(tweet.id));
@@ -1109,6 +1209,8 @@
       return;
     }
 
+    bookmarkSyncStatus.captured += tweets.length;
+    updateSyncWidget();
     console.log(`[X Collector][BookmarkSync] ${sourceLabel} 捕获到 ${tweets.length} 条书签`);
     syncBookmarkTweets(tweets).catch((error) => {
       console.error("[X Collector][BookmarkSync] 同步失败:", error);
@@ -1121,9 +1223,12 @@
     }
     bookmarkSyncHooksInstalled = true;
 
-    const originalFetch = window.fetch;
-    if (typeof originalFetch === "function") {
-      window.fetch = async function bookmarkSyncFetchWrapper(...args) {
+    // 必须挂到页面真实 window 上，沙箱里的 window.fetch 拦截不到 X 自身的请求
+    const pageWindow = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+
+    const originalFetch = pageWindow.fetch;
+    if (typeof originalFetch === "function" && !originalFetch[BOOKMARK_SYNC_HOOK_FLAGS.fetch]) {
+      const wrappedFetch = async function bookmarkSyncFetchWrapper(...args) {
         const response = await originalFetch.apply(this, args);
 
         try {
@@ -1143,39 +1248,130 @@
 
         return response;
       };
+      wrappedFetch[BOOKMARK_SYNC_HOOK_FLAGS.fetch] = true;
+      wrappedFetch.__xucOriginalFetch = originalFetch;
+      pageWindow.fetch = wrappedFetch;
     }
 
-    const originalXhrOpen = XMLHttpRequest.prototype.open;
-    const originalXhrSend = XMLHttpRequest.prototype.send;
+    const xhrProto = pageWindow.XMLHttpRequest.prototype;
+    const originalXhrOpen = xhrProto.open;
+    if (!originalXhrOpen[BOOKMARK_SYNC_HOOK_FLAGS.xhrOpen]) {
+      const wrappedXhrOpen = function bookmarkSyncXhrOpen(method, url, ...rest) {
+        this.__xucBookmarkSyncUrl = url;
+        return originalXhrOpen.apply(this, [method, url, ...rest]);
+      };
+      wrappedXhrOpen[BOOKMARK_SYNC_HOOK_FLAGS.xhrOpen] = true;
+      wrappedXhrOpen.__xucOriginalOpen = originalXhrOpen;
+      xhrProto.open = wrappedXhrOpen;
+    }
 
-    XMLHttpRequest.prototype.open = function bookmarkSyncXhrOpen(method, url, ...rest) {
-      this.__xucBookmarkSyncUrl = url;
-      return originalXhrOpen.apply(this, [method, url, ...rest]);
-    };
+    const originalXhrSend = xhrProto.send;
+    if (originalXhrSend[BOOKMARK_SYNC_HOOK_FLAGS.xhrSend]) {
+      return;
+    }
 
-    XMLHttpRequest.prototype.send = function bookmarkSyncXhrSend(...args) {
+    xhrProto.send = function bookmarkSyncXhrSend(...args) {
       if (this.__xucBookmarkSyncUrl && this.__xucBookmarkSyncUrl.includes("/graphql/") && this.__xucBookmarkSyncUrl.includes("Bookmark")) {
-        this.addEventListener("load", function onBookmarkSyncLoad() {
-          try {
-            const data = JSON.parse(this.responseText);
-            handleBookmarkGraphqlPayload(data, "xhr");
-          } catch (error) {
-            console.error("[X Collector][BookmarkSync] XHR 响应解析失败:", error);
-          }
-        });
+        this.addEventListener(
+          "load",
+          function onBookmarkSyncLoad() {
+            try {
+              const data = JSON.parse(this.responseText);
+              handleBookmarkGraphqlPayload(data, "xhr");
+            } catch (error) {
+              console.error("[X Collector][BookmarkSync] XHR 响应解析失败:", error);
+            }
+          },
+          { once: true }
+        );
       }
 
       return originalXhrSend.apply(this, args);
     };
+    xhrProto.send[BOOKMARK_SYNC_HOOK_FLAGS.xhrSend] = true;
+    xhrProto.send.__xucOriginalSend = originalXhrSend;
+  }
+
+  const bookmarkSyncStatus = {
+    state: "idle",
+    captured: 0,
+    synced: 0,
+    failed: 0,
+    message: "等待书签时间线请求",
+    lastAt: "",
+  };
+
+  function isBookmarksPage() {
+    return window.location.pathname.startsWith("/i/bookmarks");
+  }
+
+  function ensureSyncWidget() {
+    if (!document.body) {
+      return null;
+    }
+
+    let widget = document.getElementById(CONFIG.syncWidgetId);
+    if (!widget) {
+      widget = document.createElement("div");
+      widget.id = CONFIG.syncWidgetId;
+      widget.innerHTML = `
+        <span class="xuc-sync-dot"></span>
+        <div class="xuc-sync-text">
+          <div class="xuc-sync-line1"></div>
+          <div class="xuc-sync-line2"></div>
+        </div>
+      `;
+      document.body.appendChild(widget);
+    }
+    return widget;
+  }
+
+  function updateSyncWidget() {
+    const widget = ensureSyncWidget();
+    if (!widget) {
+      return;
+    }
+
+    if (!isBookmarksPage()) {
+      widget.style.display = "none";
+      return;
+    }
+
+    const dotColors = {
+      unconfigured: "#ffad1f",
+      idle: "#8b98a5",
+      syncing: "#1d9bf0",
+      ok: "#00ba7c",
+      error: "#f4212e",
+    };
+
+    widget.style.display = "flex";
+    widget.querySelector(".xuc-sync-dot").style.background = dotColors[bookmarkSyncStatus.state] || dotColors.idle;
+    widget.querySelector(".xuc-sync-line1").textContent = bookmarkSyncStatus.message;
+    const timeSuffix = bookmarkSyncStatus.lastAt ? ` · ${bookmarkSyncStatus.lastAt}` : "";
+    widget.querySelector(".xuc-sync-line2").textContent =
+      `捕获 ${bookmarkSyncStatus.captured} · 已同步 ${bookmarkSyncStatus.synced} · 失败 ${bookmarkSyncStatus.failed}${timeSuffix}`;
+  }
+
+  function setSyncStatus(stateName, message) {
+    bookmarkSyncStatus.state = stateName;
+    if (message) {
+      bookmarkSyncStatus.message = message;
+    }
+    bookmarkSyncStatus.synced = bookmarkSyncedCache.size;
+    bookmarkSyncStatus.lastAt = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+    updateSyncWidget();
   }
 
   function initBookmarkSync() {
     const config = getBookmarkSyncConfig();
     if (!config.workerUrl || !config.apiKey) {
       showNotification("书签同步未配置，请在油猴菜单中设置 Worker 配置", "warning", 6000);
+      setSyncStatus("unconfigured", "书签同步未配置");
       return;
     }
 
+    setSyncStatus("idle", "等待书签时间线请求");
     console.log("[X Collector][BookmarkSync] 已启动，等待书签时间线请求...");
   }
 
@@ -1228,15 +1424,20 @@
 
     if (sidebarToggle) {
       sidebarToggle.classList.toggle("sidebar-enabled", state.sidebarVisible);
+      sidebarToggle.classList.toggle("active", state.sidebarVisible);
+      sidebarToggle.setAttribute("aria-pressed", state.sidebarVisible ? "true" : "false");
     }
     if (searchToggle) {
       searchToggle.classList.toggle("active", state.openPanel === "search");
+      searchToggle.setAttribute("aria-pressed", state.openPanel === "search" ? "true" : "false");
     }
     if (layoutToggle) {
       layoutToggle.classList.toggle("active", state.openPanel === "layout");
+      layoutToggle.setAttribute("aria-pressed", state.openPanel === "layout" ? "true" : "false");
     }
     if (collectorToggle) {
       collectorToggle.classList.toggle("active", state.openPanel === "collector");
+      collectorToggle.setAttribute("aria-pressed", state.openPanel === "collector" ? "true" : "false");
     }
   }
 
@@ -1251,6 +1452,7 @@
     }
 
     const scope = getCollectionScope();
+    const startUrl = window.location.href;
     state.running = true;
     state.stopRequested = false;
     state.tweets = [];
@@ -1267,6 +1469,12 @@
     for (let round = 1; round <= CONFIG.maxScrollRounds; round += 1) {
       if (state.stopRequested) {
         setStatus(`已停止。共采集 ${state.tweets.length} 条，可手动导出 JSON / CSV 或下载媒体。`);
+        break;
+      }
+
+      // 用户中途跳转到其他页面时停止，避免把不同范围的推文混进同一份数据
+      if (window.location.href !== startUrl) {
+        setStatus(`页面已切换，采集自动停止。共采集 ${state.tweets.length} 条，可手动导出。`);
         break;
       }
 
@@ -1322,6 +1530,7 @@
   let stylesInjected = false;
   let historyWatcherInstalled = false;
   let domObserver = null;
+  let domObserverRoot = null;
 
   function debounce(fn, delay) {
     let timer = null;
@@ -1408,62 +1617,93 @@
       }
 
       article[data-testid="tweet"]:nth-of-type(even) {
-        background: rgba(255, 255, 255, 0.025) !important;
+        background: var(--xuc-stripe, rgba(255, 255, 255, 0.025)) !important;
       }
 
+      /* 工具栏对齐 X 原生 Grok/Chat 浮动按钮：右距 20px，从 Grok 顶部（bottom 134px）再留 12px 间距 */
       #${CONFIG.toolbarId} {
         position: fixed !important;
-        left: 20px !important;
-        bottom: 20px !important;
+        right: 20px !important;
+        bottom: 146px !important;
         z-index: 2147483647 !important;
         display: flex !important;
         flex-direction: column !important;
-        align-items: flex-start !important;
-        gap: 12px !important;
+        align-items: flex-end !important;
+        gap: 0 !important;
         font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
       }
 
       #${CONFIG.toolbarId} .xuc-toolbar-buttons {
         display: flex !important;
+        flex-direction: column !important;
         align-items: center !important;
-        gap: 10px !important;
+        justify-content: flex-end !important;
+        gap: 12px !important;
+        width: auto !important;
       }
 
+      /* 按钮样式复刻 X 的 GrokDrawerHeader / chat-drawer-main：55px、16px 圆角、同款边框与阴影 */
       #${CONFIG.toolbarId} .xuc-toolbar-btn {
-        width: 48px !important;
-        height: 48px !important;
-        border: none !important;
-        border-radius: 999px !important;
+        width: 55px !important;
+        height: 55px !important;
+        border: 1px solid rgba(159, 181, 195, 0.65) !important;
+        border-radius: 16px !important;
+        position: relative !important;
         display: inline-flex !important;
         align-items: center !important;
         justify-content: center !important;
         cursor: pointer !important;
-        color: #fff !important;
-        background: rgba(83, 100, 113, 0.92) !important;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28) !important;
-        transition: transform 0.18s ease, background 0.18s ease, box-shadow 0.18s ease !important;
-        backdrop-filter: blur(10px) !important;
+        color: #0f1419 !important;
+        background: rgba(255, 255, 255, 0.85) !important;
+        box-shadow: rgba(101, 119, 134, 0.2) 0 0 15px 0, rgba(101, 119, 134, 0.15) 0 0 3px 1px !important;
+        transition: background 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-toolbar-btn::after {
+        display: none !important;
       }
 
       #${CONFIG.toolbarId} .xuc-toolbar-btn:hover {
-        transform: translateY(-1px) scale(1.04) !important;
+        background: rgba(247, 249, 249, 0.95) !important;
+        box-shadow: rgba(101, 119, 134, 0.28) 0 0 15px 0, rgba(101, 119, 134, 0.2) 0 0 3px 1px !important;
       }
 
       #${CONFIG.toolbarId} .xuc-toolbar-btn svg {
-        width: 24px !important;
-        height: 24px !important;
+        width: 32px !important;
+        height: 32px !important;
         fill: currentColor !important;
       }
 
       #${CONFIG.toolbarId} .xuc-sidebar-toggle.sidebar-enabled {
-        background: #00ba7c !important;
+        background: rgba(255, 255, 255, 0.95) !important;
+        border-color: rgba(0, 186, 124, 0.45) !important;
+        color: #0f1419 !important;
+        box-shadow: rgba(101, 119, 134, 0.2) 0 0 15px 0, rgba(0, 186, 124, 0.25) 0 0 0 2px !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-sidebar-toggle.sidebar-enabled::after {
+        display: none !important;
       }
 
       #${CONFIG.toolbarId} .xuc-toolbar-btn.active {
-        box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.2), 0 10px 26px rgba(0, 0, 0, 0.32) !important;
+        background: rgba(255, 255, 255, 0.95) !important;
+        border-color: rgba(29, 155, 240, 0.5) !important;
+        color: #1d9bf0 !important;
+        box-shadow: rgba(101, 119, 134, 0.2) 0 0 15px 0, rgba(29, 155, 240, 0.25) 0 0 0 2px !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-toolbar-btn.active::after {
+        display: none !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-toolbar-btn.active svg {
+        transform: scale(1.02) !important;
       }
 
       #${CONFIG.toolbarId} .xuc-panel {
+        position: absolute !important;
+        right: calc(100% + 14px) !important;
+        bottom: 0 !important;
         display: none !important;
         width: min(340px, calc(100vw - 24px)) !important;
         max-height: min(72vh, 620px) !important;
@@ -1475,6 +1715,8 @@
         color: #e7e9ea !important;
         box-shadow: 0 18px 40px rgba(0, 0, 0, 0.38) !important;
         backdrop-filter: blur(14px) !important;
+        transform-origin: bottom right !important;
+        margin-right: 0 !important;
       }
 
       #${CONFIG.toolbarId} .xuc-panel.active {
@@ -1616,14 +1858,164 @@
 
       @media (max-width: 720px) {
         #${CONFIG.toolbarId} {
-          left: 12px !important;
-          right: 12px !important;
-          bottom: 12px !important;
+          right: 16px !important;
+          left: auto !important;
+          bottom: 146px !important;
         }
 
         #${CONFIG.toolbarId} .xuc-panel {
-          width: min(100vw - 24px, 340px) !important;
+          right: calc(100% + 10px) !important;
+          width: min(100vw - 96px, 340px) !important;
         }
+      }
+    `);
+
+    addStyle(`
+      /* ===== 主题系统：body 类定义变量，覆盖规则统一引用；默认主题无类、零覆盖 ===== */
+      body.xuc-theme-paper { --xuc-bg: #f7f1e3; --xuc-bg-elevated: #fbf7ec; --xuc-text: #3e3428; --xuc-text-2nd: #8a7d68; --xuc-border: #e6dcc6; --xuc-stripe: rgba(0, 0, 0, 0.02); }
+      body.xuc-theme-green { --xuc-bg: #cce8cf; --xuc-bg-elevated: #daf0dc; --xuc-text: #2f3e33; --xuc-text-2nd: #66796b; --xuc-border: #b4d9ba; --xuc-stripe: rgba(0, 0, 0, 0.02); }
+      body.xuc-theme-dim { --xuc-bg: #15202b; --xuc-bg-elevated: #1c2732; --xuc-text: #f7f9f9; --xuc-text-2nd: #8b98a5; --xuc-border: #38444d; --xuc-stripe: rgba(255, 255, 255, 0.025); }
+      body.xuc-theme-oled { --xuc-bg: #000000; --xuc-bg-elevated: #080808; --xuc-text: #e7e9ea; --xuc-text-2nd: #71767b; --xuc-border: #2f3336; --xuc-stripe: rgba(255, 255, 255, 0.03); }
+
+      body[class*="xuc-theme-"],
+      body[class*="xuc-theme-"] main[role="main"],
+      body[class*="xuc-theme-"] [data-testid="primaryColumn"],
+      body[class*="xuc-theme-"] [data-testid="sidebarColumn"],
+      body[class*="xuc-theme-"] header[role="banner"] {
+        background-color: var(--xuc-bg) !important;
+      }
+
+      /* 置顶栏（首页 Tab、页面标题）由 tagElevatedBars() 打标，X 原本是半透明白底+模糊 */
+      body[class*="xuc-theme-"] [data-xuc-elevated],
+      body[class*="xuc-theme-"] [data-xuc-elevated] > div {
+        background-color: var(--xuc-bg-elevated) !important;
+        backdrop-filter: none !important;
+      }
+
+      body[class*="xuc-theme-"] main div,
+      body[class*="xuc-theme-"] header[role="banner"] div {
+        border-color: var(--xuc-border) !important;
+      }
+
+      /* 深色主题需要翻转文字色；浅色主题沿用 X 自身深色文字 */
+      body.xuc-theme-dim [data-testid="tweetText"], body.xuc-theme-dim [data-testid="tweetText"] span,
+      body.xuc-theme-oled [data-testid="tweetText"], body.xuc-theme-oled [data-testid="tweetText"] span,
+      body.xuc-theme-dim [data-testid="User-Name"] span,
+      body.xuc-theme-oled [data-testid="User-Name"] span,
+      body.xuc-theme-dim main h2, body.xuc-theme-dim main h2 span,
+      body.xuc-theme-oled main h2, body.xuc-theme-oled main h2 span {
+        color: var(--xuc-text) !important;
+      }
+
+      body.xuc-theme-dim [data-testid="tweetText"] a, body.xuc-theme-dim [data-testid="tweetText"] a span,
+      body.xuc-theme-oled [data-testid="tweetText"] a, body.xuc-theme-oled [data-testid="tweetText"] a span {
+        color: #1d9bf0 !important;
+      }
+
+      body.xuc-theme-dim article time, body.xuc-theme-oled article time {
+        color: var(--xuc-text-2nd) !important;
+      }
+
+      /* ===== 阅读增强 ===== */
+      body.xuc-font-custom [data-testid="tweetText"] {
+        font-size: var(--xuc-font-size) !important;
+      }
+
+      body.xuc-lh-custom [data-testid="tweetText"] {
+        line-height: var(--xuc-line-height) !important;
+      }
+
+      body.xuc-serif [data-testid="tweetText"] {
+        font-family: Georgia, "Times New Roman", "Source Han Serif SC", "Noto Serif SC", STSong, serif !important;
+      }
+
+      body.xuc-focus-mode article div[role="group"] { display: none !important; }
+      body.xuc-focus-mode [data-testid="socialContext"] { display: none !important; }
+
+      article.xuc-read {
+        opacity: 0.55 !important;
+        transition: opacity 0.4s ease !important;
+      }
+
+      /* ===== 书签同步状态部件 ===== */
+      #${CONFIG.syncWidgetId} {
+        position: fixed !important;
+        top: 70px !important;
+        right: 20px !important;
+        z-index: 2147483646 !important;
+        display: none;
+        align-items: center !important;
+        gap: 10px !important;
+        padding: 10px 14px !important;
+        border-radius: 16px !important;
+        border: 1px solid var(--xuc-border, rgba(159, 181, 195, 0.65)) !important;
+        background: var(--xuc-bg-elevated, rgba(255, 255, 255, 0.92)) !important;
+        box-shadow: rgba(101, 119, 134, 0.2) 0 0 15px 0, rgba(101, 119, 134, 0.15) 0 0 3px 1px !important;
+        color: var(--xuc-text, #0f1419) !important;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+        font-size: 12px !important;
+        line-height: 1.4 !important;
+        max-width: 320px !important;
+      }
+
+      #${CONFIG.syncWidgetId} .xuc-sync-dot {
+        width: 10px !important;
+        height: 10px !important;
+        border-radius: 999px !important;
+        background: #8b98a5;
+        flex: none !important;
+      }
+
+      #${CONFIG.syncWidgetId} .xuc-sync-line1 { font-weight: 700 !important; }
+      #${CONFIG.syncWidgetId} .xuc-sync-line2 { color: var(--xuc-text-2nd, #8b98a5) !important; }
+
+      /* ===== 面板新控件：主题色块与阅读区块 ===== */
+      #${CONFIG.toolbarId} .xuc-theme-row {
+        display: flex !important;
+        gap: 6px !important;
+        margin-top: 10px !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-theme-btn {
+        flex: 1 1 0 !important;
+        padding: 9px 0 !important;
+        border-radius: 10px !important;
+        border: 1px solid rgba(255, 255, 255, 0.14) !important;
+        font-size: 12px !important;
+        cursor: pointer !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-theme-btn[data-theme=""] { background: #fff !important; color: #0f1419 !important; }
+      #${CONFIG.toolbarId} .xuc-theme-btn[data-theme="paper"] { background: #f7f1e3 !important; color: #3e3428 !important; }
+      #${CONFIG.toolbarId} .xuc-theme-btn[data-theme="green"] { background: #cce8cf !important; color: #2f3e33 !important; }
+      #${CONFIG.toolbarId} .xuc-theme-btn[data-theme="dim"] { background: #15202b !important; color: #f7f9f9 !important; border-color: #38444d !important; }
+      #${CONFIG.toolbarId} .xuc-theme-btn[data-theme="oled"] { background: #000 !important; color: #e7e9ea !important; border-color: #2f3336 !important; }
+      #${CONFIG.toolbarId} .xuc-theme-btn.active { box-shadow: 0 0 0 2px #1d9bf0 !important; }
+
+      #${CONFIG.toolbarId} .xuc-read-section {
+        margin-top: 14px !important;
+        padding-top: 14px !important;
+        border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-slider-head {
+        display: flex !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        margin: 10px 0 6px !important;
+        font-size: 13px !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-toggle-row {
+        display: grid !important;
+        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+        gap: 8px !important;
+        margin-top: 12px !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-toggle-btn.active {
+        background: #1d9bf0 !important;
+        border-color: transparent !important;
       }
     `);
 
@@ -1638,41 +2030,211 @@
     document.documentElement.style.setProperty("--xuc-tweet-width", `${state.tweetWidth}px`);
   }
 
+  function applyTheme() {
+    if (!document.body) {
+      return;
+    }
+    THEMES.forEach((theme) => {
+      document.body.classList.toggle(`xuc-theme-${theme}`, state.theme === theme);
+    });
+  }
+
+  // X 的置顶栏（首页 Tab、页面标题）是半透明白底，CSS 选不到 position:sticky，
+  // 用 h2/nav 锚点向上找 sticky 祖先打标，再由主题 CSS 统一覆盖
+  function tagElevatedBars() {
+    if (!state.theme) {
+      return;
+    }
+
+    document.querySelectorAll('main h2, main nav[role="navigation"]').forEach((node) => {
+      let el = node;
+      for (let depth = 0; depth < 8 && el && el !== document.body; depth += 1) {
+        if (el.hasAttribute("data-xuc-elevated")) {
+          return;
+        }
+        if (getComputedStyle(el).position === "sticky") {
+          el.setAttribute("data-xuc-elevated", "1");
+          return;
+        }
+        el = el.parentElement;
+      }
+    });
+  }
+
+  function applyReadingPrefs() {
+    if (!document.body) {
+      return;
+    }
+
+    document.body.classList.toggle("xuc-font-custom", state.fontSize > 0);
+    document.body.classList.toggle("xuc-lh-custom", state.lineHeight > 0);
+    document.body.classList.toggle("xuc-serif", state.serifFont);
+    document.body.classList.toggle("xuc-focus-mode", state.focusMode);
+
+    const rootStyle = document.documentElement.style;
+    if (state.fontSize > 0) {
+      rootStyle.setProperty("--xuc-font-size", `${state.fontSize}px`);
+    } else {
+      rootStyle.removeProperty("--xuc-font-size");
+    }
+    if (state.lineHeight > 0) {
+      rootStyle.setProperty("--xuc-line-height", String(state.lineHeight));
+    } else {
+      rootStyle.removeProperty("--xuc-line-height");
+    }
+  }
+
+  let readObserver = null;
+
+  function ensureReadObserver() {
+    if (!state.dimRead) {
+      if (readObserver) {
+        readObserver.disconnect();
+        readObserver = null;
+      }
+      document.querySelectorAll("article.xuc-read").forEach((node) => node.classList.remove("xuc-read"));
+      document.querySelectorAll('article[data-xuc-observed="true"]').forEach((node) => {
+        node.removeAttribute("data-xuc-observed");
+      });
+      return;
+    }
+
+    // 推文详情页不做已读标记，避免把正在阅读的推文淡化
+    if (/\/status\/\d+/.test(window.location.pathname)) {
+      return;
+    }
+
+    if (!readObserver) {
+      readObserver = new IntersectionObserver((entries) => {
+        if (state.running) {
+          return;
+        }
+        entries.forEach((entry) => {
+          // 仅当卡片从视口顶部滚出（已被阅读过）才标记
+          if (!entry.isIntersecting && entry.boundingClientRect.bottom < 0) {
+            const id = getTweetId(getTweetUrl(entry.target));
+            if (id) {
+              state.readTweetIds.add(id);
+            }
+            entry.target.classList.add("xuc-read");
+          }
+        });
+      });
+    }
+
+    document.querySelectorAll(TWEET_SELECTOR).forEach((article) => {
+      if (article.dataset.xucObserved !== "true") {
+        article.dataset.xucObserved = "true";
+        readObserver.observe(article);
+      }
+      // 虚拟列表重挂载的卡片对照会话内已读集合补类
+      if (!article.classList.contains("xuc-read")) {
+        const id = getTweetId(getTweetUrl(article));
+        if (id && state.readTweetIds.has(id)) {
+          article.classList.add("xuc-read");
+        }
+      }
+    });
+  }
+
+  function updateReadingControls() {
+    document.querySelectorAll(`#${CONFIG.toolbarId} .xuc-theme-btn`).forEach((button) => {
+      button.classList.toggle("active", (button.dataset.theme || "") === state.theme);
+    });
+
+    const fontValue = document.getElementById(CONFIG.fontSizeValueId);
+    const fontSlider = document.getElementById(CONFIG.fontSizeSliderId);
+    if (fontValue) {
+      fontValue.textContent = state.fontSize > 0 ? `${state.fontSize}px` : "默认";
+    }
+    if (fontSlider) {
+      fontSlider.value = String(state.fontSize > 0 ? state.fontSize : 13);
+    }
+
+    const lineHeightValue = document.getElementById(CONFIG.lineHeightValueId);
+    const lineHeightSlider = document.getElementById(CONFIG.lineHeightSliderId);
+    if (lineHeightValue) {
+      lineHeightValue.textContent = state.lineHeight > 0 ? state.lineHeight.toFixed(1) : "默认";
+    }
+    if (lineHeightSlider) {
+      lineHeightSlider.value = String(state.lineHeight > 0 ? Math.round(state.lineHeight * 10) : 12);
+    }
+
+    const serifToggle = document.querySelector(`#${CONFIG.toolbarId} .xuc-serif-toggle`);
+    const focusToggle = document.querySelector(`#${CONFIG.toolbarId} .xuc-focus-toggle`);
+    const dimReadToggle = document.querySelector(`#${CONFIG.toolbarId} .xuc-dimread-toggle`);
+    if (serifToggle) {
+      serifToggle.classList.toggle("active", state.serifFont);
+    }
+    if (focusToggle) {
+      focusToggle.classList.toggle("active", state.focusMode);
+    }
+    if (dimReadToggle) {
+      dimReadToggle.classList.toggle("active", state.dimRead);
+    }
+  }
+
   function resetHiddenTweets() {
     document.querySelectorAll('[data-xuc-hidden-by-keyword="true"]').forEach((node) => {
       node.style.display = "";
       node.removeAttribute("data-xuc-hidden-by-keyword");
     });
+    document.querySelectorAll(`${TWEET_SELECTOR}[data-xuc-keyword-signature]`).forEach((node) => {
+      node.removeAttribute("data-xuc-keyword-signature");
+    });
   }
 
-  function applyKeywordFilters() {
-    resetHiddenTweets();
+  function getKeywordSignature() {
+    return state.blockedKeywords
+      .map((keyword) => keyword.toLowerCase())
+      .sort()
+      .join("\n");
+  }
+
+  function applyKeywordFilters(force = false) {
+    const signature = getKeywordSignature();
+    if (force || state.keywordSignature !== signature) {
+      state.keywordSignature = signature;
+      resetHiddenTweets();
+    }
 
     if (!state.blockedKeywords.length) {
       return;
     }
 
     const loweredKeywords = state.blockedKeywords.map((keyword) => keyword.toLowerCase());
-    const tweets = document.querySelectorAll('article[data-testid="tweet"]');
+    const tweets = document.querySelectorAll(TWEET_SELECTOR);
 
     tweets.forEach((tweet) => {
-      const text = (tweet.innerText || "").toLowerCase();
+      if (!force && tweet.dataset.xucKeywordSignature === signature) {
+        return;
+      }
+
+      const text = (tweet.textContent || "").toLowerCase();
+      const container = tweet.closest('[data-testid="cellInnerDiv"]') || tweet;
       if (!text) {
+        container.style.display = "";
+        container.removeAttribute("data-xuc-hidden-by-keyword");
+        tweet.dataset.xucKeywordSignature = signature;
         return;
       }
 
       const matched = loweredKeywords.some((keyword) => text.includes(keyword));
       if (!matched) {
+        container.style.display = "";
+        container.removeAttribute("data-xuc-hidden-by-keyword");
+        tweet.dataset.xucKeywordSignature = signature;
         return;
       }
 
-      const container = tweet.closest('[data-testid="cellInnerDiv"]') || tweet;
       container.style.display = "none";
       container.setAttribute("data-xuc-hidden-by-keyword", "true");
+      tweet.dataset.xucKeywordSignature = signature;
     });
   }
 
   function autoExpandTweets() {
+    let expandedAny = false;
     document.querySelectorAll('[data-testid="tweet-text-show-more-link"]').forEach((button) => {
       if (button.dataset.xucExpanded === "true") {
         return;
@@ -1687,7 +2249,9 @@
 
       button.dataset.xucExpanded = "true";
       button.click();
+      expandedAny = true;
     });
+    return expandedAny;
   }
 
   function renderKeywordTags() {
@@ -1714,7 +2278,7 @@
         state.blockedKeywords.splice(index, 1);
         storageSet(CONFIG.blockedKeywordsStorageKey, state.blockedKeywords);
         renderKeywordTags();
-        applyKeywordFilters();
+        applyKeywordFilters(true);
       });
 
       tag.appendChild(text);
@@ -1804,7 +2368,7 @@
     storageSet(CONFIG.blockedKeywordsStorageKey, state.blockedKeywords);
     input.value = "";
     renderKeywordTags();
-    applyKeywordFilters();
+    applyKeywordFilters(true);
   }
 
   function runToolbarSearch() {
@@ -1818,25 +2382,27 @@
   }
 
   function getToolbarIcons() {
+    // 线条粗细与风格对齐 X 原生图标（搜索为 X 官方放大镜路径）
     return {
       menu: `
         <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M5.5 6A1.5 1.5 0 0 1 7 4.5h11A1.5 1.5 0 0 1 19.5 6 1.5 1.5 0 0 1 18 7.5H7A1.5 1.5 0 0 1 5.5 6zm-2 6A1.5 1.5 0 0 1 5 10.5h13A1.5 1.5 0 0 1 19.5 12 1.5 1.5 0 0 1 18 13.5H5A1.5 1.5 0 0 1 3.5 12zm4 6A1.5 1.5 0 0 1 9 16.5h9a1.5 1.5 0 0 1 0 3H9A1.5 1.5 0 0 1 7.5 18z"></path>
+          <path d="M3 6h18v2H3V6zm0 5h18v2H3v-2zm0 5h18v2H3v-2z"></path>
         </svg>
       `,
       search: `
         <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M10.5 4a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zm0 2.5a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm5.2 8.44 1.77-1.77 4.03 4.03a1.25 1.25 0 1 1-1.77 1.77l-4.03-4.03z"></path>
+          <path d="M10.25 3.75c-3.59 0-6.5 2.91-6.5 6.5s2.91 6.5 6.5 6.5c1.795 0 3.419-.726 4.596-1.904 1.178-1.177 1.904-2.801 1.904-4.596 0-3.59-2.91-6.5-6.5-6.5zm-8.5 6.5c0-4.694 3.806-8.5 8.5-8.5s8.5 3.806 8.5 8.5c0 1.986-.682 3.815-1.824 5.262l4.781 4.781-1.414 1.414-4.781-4.781c-1.447 1.142-3.276 1.824-5.262 1.824-4.694 0-8.5-3.806-8.5-8.5z"></path>
         </svg>
       `,
       layout: `
         <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M6 5.25A2.75 2.75 0 1 1 6 10.75 2.75 2.75 0 0 1 6 5.25zm5.5 1.25h7A1.25 1.25 0 0 1 19.75 7.75 1.25 1.25 0 0 1 18.5 9h-7a1.25 1.25 0 1 1 0-2.5zM18 13.25a2.75 2.75 0 1 1 0 5.5 2.75 2.75 0 0 1 0-5.5zm-12.5 1.25h7A1.25 1.25 0 0 1 13.75 15.75 1.25 1.25 0 0 1 12.5 17h-7a1.25 1.25 0 1 1 0-2.5z"></path>
+          <path d="M4 6h16v2H4V6zm3 5h10v2H7v-2zm3 5h4v2h-4v-2z"></path>
         </svg>
       `,
       collector: `
         <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M12 3.5A1.5 1.5 0 0 1 13.5 5v6.88l1.72-1.72a1.25 1.25 0 1 1 1.76 1.76l-3.85 3.85a1.6 1.6 0 0 1-2.26 0l-3.85-3.85a1.25 1.25 0 1 1 1.76-1.76l1.72 1.72V5A1.5 1.5 0 0 1 12 3.5zm-7.5 13A1.5 1.5 0 0 1 6 15h12a1.5 1.5 0 0 1 1.5 1.5V18A2.5 2.5 0 0 1 17 20.5H7A2.5 2.5 0 0 1 4.5 18v-1.5z"></path>
+          <path d="M12 3.25c.55 0 1 .45 1 1v8.34l2.72-2.72 1.41 1.42-4.42 4.42a1 1 0 0 1-1.42 0l-4.42-4.42 1.41-1.42L11 12.59V4.25c0-.55.45-1 1-1z"></path>
+          <path d="M4.75 14v4c0 .69.56 1.25 1.25 1.25h12c.69 0 1.25-.56 1.25-1.25v-4h2v4A3.25 3.25 0 0 1 18 21.25H6A3.25 3.25 0 0 1 2.75 18v-4h2z"></path>
         </svg>
       `,
     };
@@ -1868,9 +2434,33 @@
       </div>
 
       <div class="xuc-panel xuc-layout-panel">
-        <div class="xuc-panel-title">布局与过滤</div>
-        <div class="xuc-panel-subtitle">关键词过滤会隐藏当前时间线中命中的推文。</div>
-        <div class="xuc-input-row" style="margin-top:10px;">
+        <div class="xuc-panel-title">布局与阅读</div>
+        <div class="xuc-panel-subtitle">主题全站生效（深色主题配合 X 浅色模式效果最佳）；关键词过滤会隐藏命中的推文。</div>
+        <div class="xuc-theme-row">
+          <button type="button" class="xuc-theme-btn" data-theme="">默认</button>
+          <button type="button" class="xuc-theme-btn" data-theme="paper">米黄</button>
+          <button type="button" class="xuc-theme-btn" data-theme="green">豆绿</button>
+          <button type="button" class="xuc-theme-btn" data-theme="dim">Dim</button>
+          <button type="button" class="xuc-theme-btn" data-theme="oled">OLED</button>
+        </div>
+        <div class="xuc-read-section">
+          <div class="xuc-slider-head">
+            <span>正文字号</span>
+            <strong id="${CONFIG.fontSizeValueId}">默认</strong>
+          </div>
+          <input id="${CONFIG.fontSizeSliderId}" type="range" min="13" max="20" step="1" value="13" />
+          <div class="xuc-slider-head">
+            <span>正文行距</span>
+            <strong id="${CONFIG.lineHeightValueId}">默认</strong>
+          </div>
+          <input id="${CONFIG.lineHeightSliderId}" type="range" min="12" max="20" step="1" value="12" />
+          <div class="xuc-toggle-row">
+            <button type="button" class="xuc-toggle-btn xuc-serif-toggle">衬线字体</button>
+            <button type="button" class="xuc-toggle-btn xuc-focus-toggle">聚焦模式</button>
+            <button type="button" class="xuc-toggle-btn xuc-dimread-toggle">已读淡化</button>
+          </div>
+        </div>
+        <div class="xuc-input-row" style="margin-top:14px;">
           <input id="${CONFIG.keywordInputId}" type="text" placeholder="添加屏蔽关键词" />
           <button id="${CONFIG.keywordAddButtonId}" type="button" class="xuc-primary">添加</button>
         </div>
@@ -1900,6 +2490,7 @@
           <button id="${CONFIG.exportCsvButtonId}" type="button">导出 CSV</button>
           <button id="${CONFIG.exportMdButtonId}" type="button">导出 Markdown</button>
           <button id="${CONFIG.downloadMediaButtonId}" type="button" class="xuc-accent">下载图片 ZIP</button>
+          <button id="${CONFIG.syncConfigButtonId}" type="button">书签同步配置</button>
         </div>
         <div id="${CONFIG.statusId}">等待开始</div>
       </div>
@@ -1960,6 +2551,53 @@
       });
     });
 
+    toolbar.querySelectorAll(".xuc-theme-btn").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.theme = normalizeTheme(button.dataset.theme);
+        storageSet(CONFIG.themeStorageKey, state.theme);
+        applyTheme();
+        tagElevatedBars();
+        updateReadingControls();
+      });
+    });
+
+    toolbar.querySelector(`#${CONFIG.fontSizeSliderId}`).addEventListener("input", (event) => {
+      const raw = Number(event.target.value);
+      state.fontSize = raw <= 13 ? 0 : clampFontSize(raw);
+      storageSet(CONFIG.fontSizeStorageKey, state.fontSize);
+      applyReadingPrefs();
+      updateReadingControls();
+    });
+
+    toolbar.querySelector(`#${CONFIG.lineHeightSliderId}`).addEventListener("input", (event) => {
+      const raw = Number(event.target.value) / 10;
+      state.lineHeight = raw <= 1.2 ? 0 : clampLineHeight(raw);
+      storageSet(CONFIG.lineHeightStorageKey, state.lineHeight);
+      applyReadingPrefs();
+      updateReadingControls();
+    });
+
+    toolbar.querySelector(".xuc-serif-toggle").addEventListener("click", () => {
+      state.serifFont = !state.serifFont;
+      storageSet(CONFIG.serifStorageKey, state.serifFont);
+      applyReadingPrefs();
+      updateReadingControls();
+    });
+
+    toolbar.querySelector(".xuc-focus-toggle").addEventListener("click", () => {
+      state.focusMode = !state.focusMode;
+      storageSet(CONFIG.focusModeStorageKey, state.focusMode);
+      applyReadingPrefs();
+      updateReadingControls();
+    });
+
+    toolbar.querySelector(".xuc-dimread-toggle").addEventListener("click", () => {
+      state.dimRead = !state.dimRead;
+      storageSet(CONFIG.dimReadStorageKey, state.dimRead);
+      ensureReadObserver();
+      updateReadingControls();
+    });
+
     toolbar.querySelector(`#${CONFIG.startButtonId}`).addEventListener("click", () => {
       runCollection().catch((error) => {
         console.error("[X Collector] runCollection failed:", error);
@@ -1971,6 +2609,7 @@
     });
 
     toolbar.querySelector(`#${CONFIG.stopButtonId}`).addEventListener("click", stopCollection);
+    toolbar.querySelector(`#${CONFIG.syncConfigButtonId}`).addEventListener("click", showBookmarkSyncConfigDialog);
     toolbar.querySelector(`#${CONFIG.exportJsonButtonId}`).addEventListener("click", exportJsonOnly);
     toolbar.querySelector(`#${CONFIG.exportCsvButtonId}`).addEventListener("click", exportCsvOnly);
     toolbar.querySelector(`#${CONFIG.exportMdButtonId}`).addEventListener("click", exportMarkdownOnly);
@@ -1984,6 +2623,7 @@
     document.body.appendChild(toolbar);
     renderKeywordTags();
     updateWidthControls();
+    updateReadingControls();
     updateScopeInfo();
     updateButtons();
     state.toolbarReady = true;
@@ -1997,8 +2637,11 @@
     buildToolbar();
     applySidebarState();
     applyTweetWidth();
+    applyTheme();
+    applyReadingPrefs();
     renderKeywordTags();
     updateWidthControls();
+    updateReadingControls();
     updateScopeInfo();
     syncPanelVisibility();
   }
@@ -2011,11 +2654,15 @@
       }
     }
 
+    startDomObserver();
     ensureToolbar();
-    applyKeywordFilters();
-    autoExpandTweets();
+    const expandedAny = autoExpandTweets();
+    applyKeywordFilters(expandedAny);
+    ensureReadObserver();
+    tagElevatedBars();
+    updateSyncWidget();
     updateButtons();
-  }, 120);
+  }, 180);
 
   function installHistoryWatcher() {
     if (historyWatcherInstalled) {
@@ -2025,11 +2672,19 @@
     historyWatcherInstalled = true;
     const wrap = (methodName) => {
       const original = history[methodName];
+      const flag =
+        methodName === "pushState"
+          ? BOOKMARK_SYNC_HOOK_FLAGS.historyPushState
+          : BOOKMARK_SYNC_HOOK_FLAGS.historyReplaceState;
+      if (original[flag]) {
+        return;
+      }
       history[methodName] = function wrappedHistoryMethod(...args) {
         const result = original.apply(this, args);
         window.setTimeout(refreshInterface, 0);
         return result;
       };
+      history[methodName][flag] = true;
     };
 
     wrap("pushState");
@@ -2040,12 +2695,22 @@
   }
 
   function startDomObserver() {
-    if (!document.body || domObserver) {
+    const root = document.querySelector('[data-testid="primaryColumn"]') || document.querySelector('main[role="main"]') || document.body;
+    if (!root) {
       return;
     }
 
+    if (domObserver && domObserverRoot === root) {
+      return;
+    }
+
+    if (domObserver) {
+      domObserver.disconnect();
+    }
+
+    domObserverRoot = root;
     domObserver = new MutationObserver(refreshInterface);
-    domObserver.observe(document.body, {
+    domObserver.observe(root, {
       childList: true,
       subtree: true,
     });
