@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X 用户主页推文采集器
 // @namespace    https://example.local/
-// @version      0.6.0
+// @version      0.7.0
 // @description  合并宽屏布局、搜索、关键词过滤、时间线采集导出与书签同步功能的 X userscript。
 // @author       Codex
 // @match        https://x.com/*
@@ -11,6 +11,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
+// @grant        GM_download
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
 // @connect      pbs.twimg.com
@@ -64,6 +65,7 @@
     serifStorageKey: "xuc_serif",
     focusModeStorageKey: "xuc_focus_mode",
     dimReadStorageKey: "xuc_dim_read",
+    syncedIdsStorageKey: "xuc_bookmark_synced_ids",
     minTweetWidth: 500,
     maxTweetWidth: 1400,
     defaultTweetWidth: 900,
@@ -77,6 +79,8 @@
   };
 
   const TWEET_SELECTOR = 'article[data-testid="tweet"]';
+  // 采集会话期间拦截的时间线 GraphQL 操作名
+  const TIMELINE_OPS_PATTERN = /\/(UserTweets|UserTweetsAndReplies|UserMedia|HomeTimeline|HomeLatestTimeline)(\?|$)/;
   const BOOKMARK_SYNC_HOOK_FLAGS = {
     fetch: "__xucBookmarkSyncFetchWrapped",
     xhrOpen: "__xucBookmarkSyncXhrOpenWrapped",
@@ -191,7 +195,19 @@
   let notificationContainer = null;
   let bookmarkSyncHooksInstalled = false;
   const bookmarkProcessingIds = new Set();
-  const bookmarkSyncedCache = new Set();
+  const storedSyncedIds = storageGet(CONFIG.syncedIdsStorageKey, []);
+  const bookmarkSyncedCache = new Set(Array.isArray(storedSyncedIds) ? storedSyncedIds.map(String) : []);
+
+  // 已同步 id 持久化（防抖），刷新页面后不再重复 check 这些 id
+  const persistSyncedCache = debounce(() => {
+    const MAX_PERSISTED_SYNCED_IDS = 5000;
+    let ids = Array.from(bookmarkSyncedCache);
+    if (ids.length > MAX_PERSISTED_SYNCED_IDS) {
+      // Set 迭代序即插入序，裁掉最旧的
+      ids = ids.slice(ids.length - MAX_PERSISTED_SYNCED_IDS);
+    }
+    storageSet(CONFIG.syncedIdsStorageKey, ids);
+  }, 2000);
 
   function getBookmarkSyncConfig() {
     return {
@@ -613,10 +629,12 @@
       text: getTweetText(article),
       quotedText: getQuotedText(article),
       mediaUrls: getMediaUrls(article),
+      media: [],
       replies: metrics.replies,
       reposts: metrics.reposts,
       likes: metrics.likes,
       views: metrics.views,
+      source: "dom",
     };
   }
 
@@ -630,13 +648,9 @@
       if (!record) {
         continue;
       }
-      if (state.tweetMap.has(record.tweetId)) {
-        continue;
+      if (ingestCollectedRecord(record)) {
+        newCount += 1;
       }
-
-      state.tweetMap.set(record.tweetId, record);
-      state.tweets.push(record);
-      newCount += 1;
 
       if (state.tweets.length >= CONFIG.maxTweets) {
         break;
@@ -846,21 +860,54 @@
     });
   }
 
+  function gmDownloadFile(url, filename) {
+    return new Promise((resolve, reject) => {
+      if (typeof GM_download === "function") {
+        GM_download({
+          url,
+          name: filename,
+          onload: () => resolve(true),
+          onerror: (error) => reject(new Error(error?.error || "下载失败")),
+          ontimeout: () => reject(new Error("下载超时")),
+        });
+        return;
+      }
+
+      // 无 GM_download 时回退：抓取 blob 后用 <a download> 保存
+      gmRequestBlob(url)
+        .then((blob) => {
+          triggerDownload(filename, blob, "application/octet-stream");
+          resolve(true);
+        })
+        .catch(reject);
+    });
+  }
+
   async function downloadMedia() {
     if (!state.tweets.length) {
       window.alert("当前没有可下载媒体的采集结果。");
       return;
     }
 
-    if (typeof fflate === "undefined") {
-      window.alert("fflate 未加载成功，暂时无法打包下载。");
-      return;
-    }
-
-    const mediaItems = [];
+    const imageItems = [];
+    const videoItems = [];
     const seen = new Set();
 
     for (const tweet of state.tweets) {
+      // GraphQL 记录带结构化媒体，视频取真实 mp4 地址
+      for (const mediaItem of tweet.media || []) {
+        if (!mediaItem.url || seen.has(mediaItem.url)) {
+          continue;
+        }
+        seen.add(mediaItem.url);
+        if (mediaItem.type === "video" || mediaItem.type === "animated_gif") {
+          videoItems.push({ url: mediaItem.url, tweetId: tweet.tweetId, authorHandle: tweet.authorHandle || "unknown" });
+        } else if (mediaItem.type === "photo") {
+          imageItems.push({ mediaUrl: mediaItem.url, tweetId: tweet.tweetId, authorHandle: tweet.authorHandle || "unknown" });
+        }
+      }
+
+      // DOM 兜底记录只有扁平 mediaUrls（仅图片可用）
       for (const mediaUrl of tweet.mediaUrls || []) {
         if (!mediaUrl || seen.has(mediaUrl)) {
           continue;
@@ -869,69 +916,95 @@
           continue;
         }
         seen.add(mediaUrl);
-        mediaItems.push({
-          mediaUrl,
-          tweetId: tweet.tweetId,
-          authorHandle: tweet.authorHandle || "unknown",
-          mediaType: guessMediaType(mediaUrl),
-        });
+        imageItems.push({ mediaUrl, tweetId: tweet.tweetId, authorHandle: tweet.authorHandle || "unknown" });
       }
     }
 
-    if (!mediaItems.length) {
-      window.alert("当前采集结果里没有可直接下载的图片链接。");
+    if (!imageItems.length && !videoItems.length) {
+      window.alert("当前采集结果里没有可下载的媒体链接。");
       return;
     }
 
     const scope = sanitizeFilePart(getCollectionScope().key);
-    const zipEntries = {};
-    setStatus(`开始抓取图片，共 ${mediaItems.length} 个文件，稍后打包为 ZIP...`);
+    let imageSuccess = 0;
+    let imageFailed = 0;
 
-    let success = 0;
-    let failed = 0;
+    if (imageItems.length) {
+      if (typeof fflate === "undefined") {
+        window.alert("fflate 未加载成功，图片暂时无法打包，仅尝试下载视频。");
+      } else {
+        const zipEntries = {};
+        setStatus(`开始抓取图片，共 ${imageItems.length} 个文件，稍后打包为 ZIP...`);
 
-    for (let index = 0; index < mediaItems.length; index += 1) {
-      const item = mediaItems[index];
-      const ext = getExtensionFromUrl(item.mediaUrl);
-      const filename = `image-${item.authorHandle}-${item.tweetId}-${String(index + 1).padStart(4, "0")}.${ext}`;
+        for (let index = 0; index < imageItems.length; index += 1) {
+          const item = imageItems[index];
+          const ext = getExtensionFromUrl(item.mediaUrl);
+          const filename = `image-${item.authorHandle}-${item.tweetId}-${String(index + 1).padStart(4, "0")}.${ext}`;
 
-      try {
-        const blob = await gmRequestBlob(item.mediaUrl);
-        const arrayBuffer = await blob.arrayBuffer();
-        zipEntries[`x-${scope}-images/${filename}`] = new Uint8Array(arrayBuffer);
-        success += 1;
-      } catch (error) {
-        failed += 1;
-        console.warn("[X Collector] media download failed:", item.mediaUrl, error);
-      }
-
-      setStatus(`图片抓取中 ${index + 1}/${mediaItems.length} | 成功 ${success} | 失败 ${failed}`);
-      await sleep(120);
-    }
-
-    if (!success) {
-      setStatus(`图片打包失败，没有可写入 ZIP 的文件。失败 ${failed} 个。`);
-      return;
-    }
-
-    setStatus(`图片抓取完成，正在生成 ZIP...`);
-    const zipData = await new Promise((resolve, reject) => {
-      try {
-        fflate.zip(zipEntries, { level: 0 }, (error, data) => {
-          if (error) {
-            reject(error);
-            return;
+          try {
+            const blob = await gmRequestBlob(item.mediaUrl);
+            const arrayBuffer = await blob.arrayBuffer();
+            zipEntries[`x-${scope}-images/${filename}`] = new Uint8Array(arrayBuffer);
+            imageSuccess += 1;
+          } catch (error) {
+            imageFailed += 1;
+            console.warn("[X Collector] media download failed:", item.mediaUrl, error);
           }
-          resolve(data);
-        });
-      } catch (error) {
-        reject(error);
+
+          setStatus(`图片抓取中 ${index + 1}/${imageItems.length} | 成功 ${imageSuccess} | 失败 ${imageFailed}`);
+          await sleep(120);
+        }
+
+        if (imageSuccess) {
+          setStatus(`图片抓取完成，正在生成 ZIP...`);
+          const zipData = await new Promise((resolve, reject) => {
+            try {
+              fflate.zip(zipEntries, { level: 0 }, (error, data) => {
+                if (error) {
+                  reject(error);
+                  return;
+                }
+                resolve(data);
+              });
+            } catch (error) {
+              reject(error);
+            }
+          });
+          const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+          triggerDownload(`x-${scope}-images-${stamp}.zip`, new Blob([zipData], { type: "application/zip" }), "application/zip");
+        }
       }
-    });
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const zipName = `x-${scope}-images-${stamp}.zip`;
-    triggerDownload(zipName, new Blob([zipData], { type: "application/zip" }), "application/zip");
-    setStatus(`图片 ZIP 已生成，共 ${success} 个文件打包成功，失败 ${failed} 个。`);
+    }
+
+    let videoSuccess = 0;
+    let videoFailed = 0;
+
+    for (let index = 0; index < videoItems.length; index += 1) {
+      const item = videoItems[index];
+      const filename = `x-${scope}-video-${item.authorHandle}-${item.tweetId}-${String(index + 1).padStart(3, "0")}.mp4`;
+      setStatus(`视频下载中 ${index + 1}/${videoItems.length} | 成功 ${videoSuccess} | 失败 ${videoFailed}`);
+
+      try {
+        await gmDownloadFile(item.url, filename);
+        videoSuccess += 1;
+      } catch (error) {
+        videoFailed += 1;
+        console.warn("[X Collector] video download failed:", item.url, error);
+      }
+      await sleep(300);
+    }
+
+    const parts = [];
+    if (imageItems.length) {
+      parts.push(`图片 ${imageSuccess} 成功 / ${imageFailed} 失败（已打包 ZIP）`);
+    }
+    if (videoItems.length) {
+      parts.push(`视频 ${videoSuccess} 成功 / ${videoFailed} 失败（逐个保存）`);
+    }
+    if (!videoItems.length && state.tweets.every((tweet) => !(tweet.media || []).length)) {
+      parts.push("提示：视频地址来自 GraphQL 采集，旧数据或纯 DOM 采集无视频");
+    }
+    setStatus(`媒体下载完成：${parts.join("；")}`);
   }
 
   function bookmarkApiRequest(path, data) {
@@ -992,6 +1065,79 @@
     });
   }
 
+  function unwrapTweetResult(itemContent) {
+    let result = itemContent?.tweet_results?.result;
+    if (!result) {
+      return null;
+    }
+    if (result.__typename === "TweetWithVisibilityResults" && result.tweet) {
+      result = result.tweet;
+    }
+    if (result.__typename === "TweetTombstone") {
+      return null;
+    }
+    return result;
+  }
+
+  // 从 entry 中取出全部推文 result（普通条目 1 个，对话/模块条目可能多个）
+  function extractTweetResultsFromEntry(entry) {
+    const results = [];
+    const content = entry?.content;
+    if (!content) {
+      return results;
+    }
+
+    const direct = unwrapTweetResult(content.itemContent);
+    if (direct) {
+      results.push(direct);
+    }
+    (content.items || []).forEach((item) => {
+      const nested = unwrapTweetResult(item?.item?.itemContent);
+      if (nested) {
+        results.push(nested);
+      }
+    });
+    return results;
+  }
+
+  // 从 legacy 实体提取结构化媒体（photo 取原图，video/gif 取最高码率 mp4）
+  function extractMediaFromLegacy(legacy) {
+    const media = [];
+    const mediaEntities = legacy?.extended_entities?.media || legacy?.entities?.media || [];
+
+    for (const item of mediaEntities) {
+      if (item.type === "photo") {
+        let url = item.media_url_https || item.media_url || "";
+        if (url && !url.includes("format=")) {
+          url = `${url}?format=jpg&name=orig`;
+        }
+        media.push({ type: "photo", url });
+        continue;
+      }
+
+      if (item.type === "video" || item.type === "animated_gif") {
+        const variants = (item.video_info?.variants || [])
+          .filter((variant) => variant.content_type === "video/mp4")
+          .sort((left, right) => (right.bitrate || 0) - (left.bitrate || 0));
+        if (!variants.length) {
+          continue;
+        }
+
+        let posterUrl = item.media_url_https || item.media_url || "";
+        if (posterUrl && !posterUrl.includes("format=")) {
+          posterUrl = `${posterUrl}?format=jpg&name=small`;
+        }
+        media.push({
+          type: item.type,
+          url: variants[0].url,
+          poster_url: posterUrl,
+        });
+      }
+    }
+
+    return media;
+  }
+
   function parseBookmarkTweetsFromResponse(data) {
     const tweets = [];
 
@@ -1002,20 +1148,20 @@
       }
 
       for (const instruction of timeline.instructions) {
-        const entries = instruction.entries || [];
-        for (const entry of entries) {
-          const tweet = extractBookmarkTweetFromEntry(entry);
-          if (tweet) {
-            tweets.push(tweet);
-          }
-        }
-
-        if (instruction.moduleItems) {
-          for (const item of instruction.moduleItems) {
-            const tweet = extractBookmarkTweetFromItemContent(item?.item?.itemContent);
+        for (const entry of instruction.entries || []) {
+          extractTweetResultsFromEntry(entry).forEach((result) => {
+            const tweet = normalizeBookmarkTweet(result);
             if (tweet) {
               tweets.push(tweet);
             }
+          });
+        }
+
+        for (const item of instruction.moduleItems || []) {
+          const result = unwrapTweetResult(item?.item?.itemContent);
+          const tweet = result ? normalizeBookmarkTweet(result) : null;
+          if (tweet) {
+            tweets.push(tweet);
           }
         }
       }
@@ -1024,44 +1170,6 @@
     }
 
     return tweets;
-  }
-
-  function extractBookmarkTweetFromEntry(entry) {
-    if (!entry?.content) {
-      return null;
-    }
-
-    const content = entry.content;
-    if (content.itemContent) {
-      return extractBookmarkTweetFromItemContent(content.itemContent);
-    }
-
-    if (content.items) {
-      for (const item of content.items) {
-        const tweet = extractBookmarkTweetFromItemContent(item?.item?.itemContent);
-        if (tweet) {
-          return tweet;
-        }
-      }
-    }
-
-    return null;
-  }
-
-  function extractBookmarkTweetFromItemContent(itemContent) {
-    if (!itemContent?.tweet_results?.result) {
-      return null;
-    }
-
-    let result = itemContent.tweet_results.result;
-    if (result.__typename === "TweetWithVisibilityResults" && result.tweet) {
-      result = result.tweet;
-    }
-    if (result.__typename === "TweetTombstone") {
-      return null;
-    }
-
-    return normalizeBookmarkTweet(result);
   }
 
   function normalizeBookmarkTweet(result) {
@@ -1073,39 +1181,8 @@
 
       const userResult = result?.core?.user_results?.result;
       const userLegacy = userResult?.legacy;
-      const screenName = userLegacy?.screen_name || "";
-      const media = [];
-      const mediaEntities = legacy.extended_entities?.media || legacy.entities?.media || [];
-
-      for (const item of mediaEntities) {
-        if (item.type === "photo") {
-          let url = item.media_url_https || item.media_url || "";
-          if (url && !url.includes("format=")) {
-            url = `${url}?format=jpg&name=orig`;
-          }
-          media.push({ type: "photo", url });
-          continue;
-        }
-
-        if (item.type === "video" || item.type === "animated_gif") {
-          const variants = (item.video_info?.variants || [])
-            .filter((variant) => variant.content_type === "video/mp4")
-            .sort((left, right) => (right.bitrate || 0) - (left.bitrate || 0));
-          if (!variants.length) {
-            continue;
-          }
-
-          let posterUrl = item.media_url_https || item.media_url || "";
-          if (posterUrl && !posterUrl.includes("format=")) {
-            posterUrl = `${posterUrl}?format=jpg&name=small`;
-          }
-          media.push({
-            type: item.type,
-            url: variants[0].url,
-            poster_url: posterUrl,
-          });
-        }
-      }
+      const screenName = userLegacy?.screen_name || userResult?.core?.screen_name || "";
+      const media = extractMediaFromLegacy(legacy);
 
       const tweetId = result.rest_id || legacy.id_str || "";
       return {
@@ -1113,7 +1190,7 @@
         text: legacy.full_text || "",
         author: {
           id: userResult?.rest_id || "",
-          name: userLegacy?.name || "",
+          name: userLegacy?.name || userResult?.core?.name || "",
           screen_name: screenName,
         },
         created_at: legacy.created_at || "",
@@ -1123,6 +1200,187 @@
     } catch (error) {
       console.error("[X Collector][BookmarkSync] 解析单条推文失败:", error);
       return null;
+    }
+  }
+
+  // 在 GraphQL 响应中递归查找所有 instructions 数组（用户页/首页等接口路径不同，统一处理）
+  function findInstructionArrays(node, found = [], depth = 0) {
+    if (!node || typeof node !== "object" || depth > 12) {
+      return found;
+    }
+    if (Array.isArray(node.instructions)) {
+      found.push(node.instructions);
+    }
+    for (const key of Object.keys(node)) {
+      const value = node[key];
+      if (value && typeof value === "object" && key !== "instructions") {
+        findInstructionArrays(value, found, depth + 1);
+      }
+    }
+    return found;
+  }
+
+  // 时间线 GraphQL 推文 → 与 DOM 采集一致的导出记录（数据更完整：长文不截断、精确计数、真实 mp4 地址）
+  function normalizeTimelineTweet(result, targetHandle) {
+    try {
+      let core = result;
+      let isRepost = false;
+      if (result?.legacy?.retweeted_status_result?.result) {
+        let inner = result.legacy.retweeted_status_result.result;
+        if (inner.__typename === "TweetWithVisibilityResults" && inner.tweet) {
+          inner = inner.tweet;
+        }
+        core = inner;
+        isRepost = true;
+      }
+
+      const legacy = core?.legacy;
+      if (!legacy) {
+        return null;
+      }
+
+      const tweetId = core.rest_id || legacy.id_str || "";
+      if (!tweetId) {
+        return null;
+      }
+
+      const userResult = core?.core?.user_results?.result;
+      const authorHandle = userResult?.legacy?.screen_name || userResult?.core?.screen_name || "";
+      const authorName = userResult?.legacy?.name || userResult?.core?.name || "";
+
+      let quoted = core?.quoted_status_result?.result;
+      if (quoted?.__typename === "TweetWithVisibilityResults" && quoted.tweet) {
+        quoted = quoted.tweet;
+      }
+      const quotedText = quoted?.legacy?.full_text || "";
+
+      const media = extractMediaFromLegacy(legacy);
+      const mediaUrls = [];
+      media.forEach((item) => {
+        if (item.url) {
+          mediaUrls.push(item.url);
+        }
+      });
+
+      let publishedAt = "";
+      if (legacy.created_at) {
+        const parsed = new Date(legacy.created_at);
+        publishedAt = Number.isNaN(parsed.getTime()) ? legacy.created_at : parsed.toISOString();
+      }
+
+      return {
+        tweetId,
+        url: authorHandle ? `https://x.com/${authorHandle}/status/${tweetId}` : "",
+        targetHandle,
+        authorHandle,
+        authorName,
+        isRepost:
+          isRepost ||
+          Boolean(authorHandle && targetHandle && authorHandle.toLowerCase() !== targetHandle.toLowerCase()),
+        capturedAt: new Date().toISOString(),
+        publishedAt,
+        text: legacy.full_text || "",
+        quotedText,
+        mediaUrls,
+        media,
+        replies: String(legacy.reply_count ?? ""),
+        reposts: String(legacy.retweet_count ?? ""),
+        likes: String(legacy.favorite_count ?? ""),
+        views: String(core?.views?.count ?? result?.views?.count ?? ""),
+        source: "graphql",
+      };
+    } catch (error) {
+      console.error("[X Collector] 解析时间线推文失败:", error);
+      return null;
+    }
+  }
+
+  function parseTimelineTweetsFromResponse(data) {
+    const tweets = [];
+
+    try {
+      const targetHandle = getCollectionScope().mode === "profile" ? getTargetHandle() : "";
+      for (const instructions of findInstructionArrays(data)) {
+        for (const instruction of instructions) {
+          if (
+            instruction.type &&
+            !["TimelineAddEntries", "TimelineAddToModule", "TimelinePinEntry"].includes(instruction.type)
+          ) {
+            continue;
+          }
+
+          const entries = instruction.entries || (instruction.entry ? [instruction.entry] : []);
+          for (const entry of entries) {
+            extractTweetResultsFromEntry(entry).forEach((result) => {
+              const tweet = normalizeTimelineTweet(result, targetHandle);
+              if (tweet) {
+                tweets.push(tweet);
+              }
+            });
+          }
+
+          for (const item of instruction.moduleItems || []) {
+            const result = unwrapTweetResult(item?.item?.itemContent);
+            const tweet = result ? normalizeTimelineTweet(result, targetHandle) : null;
+            if (tweet) {
+              tweets.push(tweet);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error("[X Collector] 解析时间线响应失败:", error);
+    }
+
+    return tweets;
+  }
+
+  // 采集容器统一入口：去重、上限控制、GraphQL 记录优先于 DOM 记录
+  function ingestCollectedRecord(record) {
+    if (!record || !record.tweetId) {
+      return false;
+    }
+
+    const existing = state.tweetMap.get(record.tweetId);
+    if (existing) {
+      if (existing.source === "dom" && record.source === "graphql") {
+        const index = state.tweets.indexOf(existing);
+        if (index >= 0) {
+          state.tweets[index] = record;
+        }
+        state.tweetMap.set(record.tweetId, record);
+      }
+      return false;
+    }
+
+    if (state.tweets.length >= CONFIG.maxTweets) {
+      return false;
+    }
+
+    state.tweetMap.set(record.tweetId, record);
+    state.tweets.push(record);
+    return true;
+  }
+
+  function handleTimelineGraphqlPayload(data) {
+    // 仅在采集会话期间拦截，平时浏览不积累
+    if (!state.running) {
+      return;
+    }
+
+    const tweets = parseTimelineTweetsFromResponse(data);
+    if (!tweets.length) {
+      return;
+    }
+
+    let added = 0;
+    tweets.forEach((record) => {
+      if (ingestCollectedRecord(record)) {
+        added += 1;
+      }
+    });
+    if (added > 0) {
+      console.log(`[X Collector] GraphQL 捕获 ${added} 条推文`);
     }
   }
 
@@ -1143,6 +1401,7 @@
       setSyncStatus("syncing", `校验 ${ids.length} 条书签...`);
       const checkResult = await bookmarkApiRequest("/api/twitter/check", { ids });
       (checkResult.synced || []).forEach((id) => bookmarkSyncedCache.add(id));
+      persistSyncedCache();
 
       const unsyncedIds = new Set(checkResult.unsynced || []);
       const toSync = newTweets.filter((tweet) => unsyncedIds.has(tweet.id));
@@ -1182,6 +1441,8 @@
           console.error("[X Collector][BookmarkSync] 批量同步失败:", error);
         }
       }
+
+      persistSyncedCache();
 
       bookmarkSyncStatus.failed += totalFailed;
       if (totalFailed === 0) {
@@ -1233,14 +1494,24 @@
 
         try {
           const url = typeof args[0] === "string" ? args[0] : args[0]?.url || "";
-          if (url.includes("/graphql/") && url.includes("Bookmark")) {
-            response
-              .clone()
-              .json()
-              .then((data) => handleBookmarkGraphqlPayload(data, "fetch"))
-              .catch((error) => {
-                console.error("[X Collector][BookmarkSync] fetch 响应解析失败:", error);
-              });
+          if (url.includes("/graphql/")) {
+            if (url.includes("Bookmark")) {
+              response
+                .clone()
+                .json()
+                .then((data) => handleBookmarkGraphqlPayload(data, "fetch"))
+                .catch((error) => {
+                  console.error("[X Collector][BookmarkSync] fetch 响应解析失败:", error);
+                });
+            } else if (TIMELINE_OPS_PATTERN.test(url)) {
+              response
+                .clone()
+                .json()
+                .then((data) => handleTimelineGraphqlPayload(data))
+                .catch((error) => {
+                  console.error("[X Collector] 时间线响应解析失败:", error);
+                });
+            }
           }
         } catch (error) {
           console.error("[X Collector][BookmarkSync] fetch 拦截异常:", error);
@@ -1271,15 +1542,21 @@
     }
 
     xhrProto.send = function bookmarkSyncXhrSend(...args) {
-      if (this.__xucBookmarkSyncUrl && this.__xucBookmarkSyncUrl.includes("/graphql/") && this.__xucBookmarkSyncUrl.includes("Bookmark")) {
+      const hookUrl = String(this.__xucBookmarkSyncUrl || "");
+      if (hookUrl.includes("/graphql/") && (hookUrl.includes("Bookmark") || TIMELINE_OPS_PATTERN.test(hookUrl))) {
+        const isBookmark = hookUrl.includes("Bookmark");
         this.addEventListener(
           "load",
           function onBookmarkSyncLoad() {
             try {
               const data = JSON.parse(this.responseText);
-              handleBookmarkGraphqlPayload(data, "xhr");
+              if (isBookmark) {
+                handleBookmarkGraphqlPayload(data, "xhr");
+              } else {
+                handleTimelineGraphqlPayload(data);
+              }
             } catch (error) {
-              console.error("[X Collector][BookmarkSync] XHR 响应解析失败:", error);
+              console.error("[X Collector] XHR 响应解析失败:", error);
             }
           },
           { once: true }
@@ -1465,6 +1742,7 @@
 
     let idleRounds = 0;
     let previousScrollY = -1;
+    let previousTotal = 0;
 
     for (let round = 1; round <= CONFIG.maxScrollRounds; round += 1) {
       if (state.stopRequested) {
@@ -1478,15 +1756,19 @@
         break;
       }
 
-      const newCount = collectVisibleTweets();
-      if (newCount === 0) {
+      collectVisibleTweets();
+      // GraphQL 拦截是异步入库的，空转判定看总量增量而不是单一来源
+      const totalNew = state.tweets.length - previousTotal;
+      previousTotal = state.tweets.length;
+      if (totalNew === 0) {
         idleRounds += 1;
       } else {
         idleRounds = 0;
       }
 
+      const graphqlCount = state.tweets.filter((tweet) => tweet.source === "graphql").length;
       setStatus(
-        `采集中 ${scope.label} | 第 ${round} 轮 | 新增 ${newCount} | 累计 ${state.tweets.length} | 空转 ${idleRounds}/${CONFIG.maxIdleRounds}`
+        `采集中 ${scope.label} | 第 ${round} 轮 | 新增 ${totalNew} | 累计 ${state.tweets.length}（GraphQL ${graphqlCount} / DOM ${state.tweets.length - graphqlCount}） | 空转 ${idleRounds}/${CONFIG.maxIdleRounds}`
       );
 
       if (state.tweets.length >= CONFIG.maxTweets) {
@@ -1890,6 +2172,12 @@
       body[class*="xuc-theme-"] [data-xuc-elevated] > div {
         background-color: var(--xuc-bg-elevated) !important;
         backdrop-filter: none !important;
+      }
+
+      /* r-14lw9ot 是 X 的纯白背景原子类（发推框等），主题下统一染色 */
+      body[class*="xuc-theme-"] main .r-14lw9ot,
+      body[class*="xuc-theme-"] header[role="banner"] .r-14lw9ot {
+        background-color: var(--xuc-bg) !important;
       }
 
       body[class*="xuc-theme-"] main div,
@@ -2489,7 +2777,7 @@
           <button id="${CONFIG.exportJsonButtonId}" type="button">导出 JSON</button>
           <button id="${CONFIG.exportCsvButtonId}" type="button">导出 CSV</button>
           <button id="${CONFIG.exportMdButtonId}" type="button">导出 Markdown</button>
-          <button id="${CONFIG.downloadMediaButtonId}" type="button" class="xuc-accent">下载图片 ZIP</button>
+          <button id="${CONFIG.downloadMediaButtonId}" type="button" class="xuc-accent">下载媒体</button>
           <button id="${CONFIG.syncConfigButtonId}" type="button">书签同步配置</button>
         </div>
         <div id="${CONFIG.statusId}">等待开始</div>
