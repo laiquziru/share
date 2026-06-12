@@ -2185,7 +2185,11 @@
         border-color: var(--xuc-border) !important;
       }
 
-      /* 深色主题需要翻转文字色；浅色主题沿用 X 自身深色文字 */
+      /* 深色主题需要翻转文字色；浅色主题沿用 X 自身深色文字。
+         X 浅色文字色一部分来自原子类（r-18jsvk2/r-14j79pv），一部分是内联 style，两者都要覆盖 */
+      body.xuc-theme-dim .r-18jsvk2, body.xuc-theme-oled .r-18jsvk2,
+      body.xuc-theme-dim [style*="color: rgb(15, 20, 25)"],
+      body.xuc-theme-oled [style*="color: rgb(15, 20, 25)"],
       body.xuc-theme-dim [data-testid="tweetText"], body.xuc-theme-dim [data-testid="tweetText"] span,
       body.xuc-theme-oled [data-testid="tweetText"], body.xuc-theme-oled [data-testid="tweetText"] span,
       body.xuc-theme-dim [data-testid="User-Name"] span,
@@ -2195,6 +2199,12 @@
         color: var(--xuc-text) !important;
       }
 
+      body.xuc-theme-dim .r-14j79pv, body.xuc-theme-oled .r-14j79pv,
+      body.xuc-theme-dim [style*="color: rgb(83, 100, 113)"],
+      body.xuc-theme-oled [style*="color: rgb(83, 100, 113)"] {
+        color: var(--xuc-text-2nd) !important;
+      }
+
       body.xuc-theme-dim [data-testid="tweetText"] a, body.xuc-theme-dim [data-testid="tweetText"] a span,
       body.xuc-theme-oled [data-testid="tweetText"] a, body.xuc-theme-oled [data-testid="tweetText"] a span {
         color: #1d9bf0 !important;
@@ -2202,6 +2212,16 @@
 
       body.xuc-theme-dim article time, body.xuc-theme-oled article time {
         color: var(--xuc-text-2nd) !important;
+      }
+
+      /* 兼容沉浸翻译类插件的译文卡片（ling-trans-box），深色主题下跟随配色 */
+      body.xuc-theme-dim .ling-trans-box, body.xuc-theme-oled .ling-trans-box {
+        background-color: var(--xuc-bg-elevated) !important;
+      }
+
+      body.xuc-theme-dim .ling-trans-box, body.xuc-theme-dim .ling-trans-box span, body.xuc-theme-dim .ling-trans-box div,
+      body.xuc-theme-oled .ling-trans-box, body.xuc-theme-oled .ling-trans-box span, body.xuc-theme-oled .ling-trans-box div {
+        color: var(--xuc-text) !important;
       }
 
       /* ===== 阅读增强 ===== */
