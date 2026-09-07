@@ -65,6 +65,8 @@
     serifStorageKey: "xuc_serif",
     focusModeStorageKey: "xuc_focus_mode",
     dimReadStorageKey: "xuc_dim_read",
+    autoScrollStorageKey: "xuc_auto_scroll",
+    autoScrollSecondsStorageKey: "xuc_auto_scroll_seconds",
     syncedIdsStorageKey: "xuc_bookmark_synced_ids",
     minTweetWidth: 500,
     maxTweetWidth: 1400,
@@ -76,6 +78,9 @@
     scrollDelayMs: 1400,
     settleDelayMs: 1800,
     topResetDelayMs: 1500,
+    minAutoScrollSeconds: 1,
+    maxAutoScrollSeconds: 60,
+    defaultAutoScrollSeconds: 5,
   };
 
   const TWEET_SELECTOR = 'article[data-testid="tweet"]';
@@ -171,6 +176,14 @@
     return Math.round(numeric * 10) / 10;
   }
 
+  function clampAutoScrollSeconds(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return CONFIG.defaultAutoScrollSeconds;
+    }
+    return Math.min(CONFIG.maxAutoScrollSeconds, Math.max(CONFIG.minAutoScrollSeconds, Math.round(numeric)));
+  }
+
   const state = {
     running: false,
     tweets: [],
@@ -189,10 +202,15 @@
     serifFont: Boolean(storageGet(CONFIG.serifStorageKey, false)),
     focusMode: Boolean(storageGet(CONFIG.focusModeStorageKey, false)),
     dimRead: Boolean(storageGet(CONFIG.dimReadStorageKey, false)),
+    autoScrollEnabled: Boolean(storageGet(CONFIG.autoScrollStorageKey, false)),
+    autoScrollSeconds: clampAutoScrollSeconds(
+      storageGet(CONFIG.autoScrollSecondsStorageKey, CONFIG.defaultAutoScrollSeconds)
+    ),
     readTweetIds: new Set(),
   };
 
   let notificationContainer = null;
+  let autoScrollTimer = null;
   let bookmarkSyncHooksInstalled = false;
   const bookmarkProcessingIds = new Set();
   const storedSyncedIds = storageGet(CONFIG.syncedIdsStorageKey, []);
@@ -1731,6 +1749,8 @@
     const scope = getCollectionScope();
     const startUrl = window.location.href;
     state.running = true;
+    stopAutoScroll();
+    ensureReadObserver();
     state.stopRequested = false;
     state.tweets = [];
     state.tweetMap = new Map();
@@ -1799,6 +1819,8 @@
     state.running = false;
     state.stopRequested = false;
     updateButtons();
+    ensureReadObserver();
+    syncAutoScroll();
   }
 
   function stopCollection() {
@@ -1902,8 +1924,13 @@
         background: var(--xuc-stripe, rgba(255, 255, 255, 0.025)) !important;
       }
 
-      /* 工具栏对齐 X 原生 Grok/Chat 浮动按钮：右距 20px，从 Grok 顶部（bottom 134px）再留 12px 间距 */
+      /* 样式限定在工具栏内，避免影响 X 原生控件。 */
       #${CONFIG.toolbarId} {
+        --xuc-panel-bg: #18191c;
+        --xuc-control-bg: #24262b;
+        --xuc-control-border: #3c3f46;
+        --xuc-control-text: #f2f3f5;
+        --xuc-muted-text: #a9afb9;
         position: fixed !important;
         right: 20px !important;
         bottom: 146px !important;
@@ -1913,6 +1940,19 @@
         align-items: flex-end !important;
         gap: 0 !important;
         font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+        letter-spacing: 0 !important;
+        line-height: 1.5 !important;
+        color-scheme: dark;
+      }
+
+      #${CONFIG.toolbarId},
+      #${CONFIG.toolbarId} * {
+        box-sizing: border-box !important;
+      }
+
+      #${CONFIG.toolbarId} :is(button, input):focus-visible {
+        outline: 2px solid #69bfff !important;
+        outline-offset: 3px !important;
       }
 
       #${CONFIG.toolbarId} .xuc-toolbar-buttons {
@@ -1920,24 +1960,25 @@
         flex-direction: column !important;
         align-items: center !important;
         justify-content: flex-end !important;
-        gap: 12px !important;
+        gap: 8px !important;
         width: auto !important;
       }
 
-      /* 按钮样式复刻 X 的 GrokDrawerHeader / chat-drawer-main：55px、16px 圆角、同款边框与阴影 */
+      /* 固定尺寸让悬停和选中状态不改变工具栏布局。 */
       #${CONFIG.toolbarId} .xuc-toolbar-btn {
-        width: 55px !important;
-        height: 55px !important;
-        border: 1px solid rgba(159, 181, 195, 0.65) !important;
-        border-radius: 16px !important;
+        width: 44px !important;
+        height: 44px !important;
+        padding: 0 !important;
+        border: 1px solid #d4d8de !important;
+        border-radius: 8px !important;
         position: relative !important;
         display: inline-flex !important;
         align-items: center !important;
         justify-content: center !important;
         cursor: pointer !important;
         color: #0f1419 !important;
-        background: rgba(255, 255, 255, 0.85) !important;
-        box-shadow: rgba(101, 119, 134, 0.2) 0 0 15px 0, rgba(101, 119, 134, 0.15) 0 0 3px 1px !important;
+        background: #ffffff !important;
+        box-shadow: 0 3px 12px rgba(0, 0, 0, 0.12) !important;
         transition: background 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease !important;
       }
 
@@ -1946,21 +1987,22 @@
       }
 
       #${CONFIG.toolbarId} .xuc-toolbar-btn:hover {
-        background: rgba(247, 249, 249, 0.95) !important;
-        box-shadow: rgba(101, 119, 134, 0.28) 0 0 15px 0, rgba(101, 119, 134, 0.2) 0 0 3px 1px !important;
+        background: #edf6ff !important;
+        border-color: #1685db !important;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16) !important;
       }
 
       #${CONFIG.toolbarId} .xuc-toolbar-btn svg {
-        width: 32px !important;
-        height: 32px !important;
+        width: 22px !important;
+        height: 22px !important;
         fill: currentColor !important;
       }
 
       #${CONFIG.toolbarId} .xuc-sidebar-toggle.sidebar-enabled {
-        background: rgba(255, 255, 255, 0.95) !important;
-        border-color: rgba(0, 186, 124, 0.45) !important;
-        color: #0f1419 !important;
-        box-shadow: rgba(101, 119, 134, 0.2) 0 0 15px 0, rgba(0, 186, 124, 0.25) 0 0 0 2px !important;
+        background: #e9f8f1 !important;
+        border-color: #25875b !important;
+        color: #146c46 !important;
+        box-shadow: 0 3px 12px rgba(0, 0, 0, 0.12) !important;
       }
 
       #${CONFIG.toolbarId} .xuc-sidebar-toggle.sidebar-enabled::after {
@@ -1968,10 +2010,10 @@
       }
 
       #${CONFIG.toolbarId} .xuc-toolbar-btn.active {
-        background: rgba(255, 255, 255, 0.95) !important;
-        border-color: rgba(29, 155, 240, 0.5) !important;
-        color: #1d9bf0 !important;
-        box-shadow: rgba(101, 119, 134, 0.2) 0 0 15px 0, rgba(29, 155, 240, 0.25) 0 0 0 2px !important;
+        background: #e5f2ff !important;
+        border-color: #1685db !important;
+        color: #0866b0 !important;
+        box-shadow: 0 3px 12px rgba(0, 0, 0, 0.12) !important;
       }
 
       #${CONFIG.toolbarId} .xuc-toolbar-btn.active::after {
@@ -1987,16 +2029,19 @@
         right: calc(100% + 14px) !important;
         bottom: 0 !important;
         display: none !important;
-        width: min(340px, calc(100vw - 24px)) !important;
-        max-height: min(72vh, 620px) !important;
+        width: min(360px, calc(100vw - 90px)) !important;
+        max-height: min(640px, calc(100dvh - 226px)) !important;
         overflow-y: auto !important;
-        padding: 16px !important;
-        border: 1px solid rgba(255, 255, 255, 0.12) !important;
-        border-radius: 18px !important;
-        background: rgba(15, 20, 25, 0.95) !important;
-        color: #e7e9ea !important;
-        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.38) !important;
-        backdrop-filter: blur(14px) !important;
+        padding: 20px !important;
+        border: 1px solid var(--xuc-control-border) !important;
+        border-radius: 8px !important;
+        background: var(--xuc-panel-bg) !important;
+        color: var(--xuc-control-text) !important;
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.24) !important;
+        scrollbar-width: thin;
+        scrollbar-color: #50545d transparent;
+        overscroll-behavior: contain;
+        overflow-wrap: anywhere;
         transform-origin: bottom right !important;
         margin-right: 0 !important;
       }
@@ -2008,8 +2053,8 @@
 
     addStyle(`
       #${CONFIG.toolbarId} .xuc-panel-title {
-        margin: 0 0 8px 0 !important;
-        font-size: 15px !important;
+        margin: 0 0 16px 0 !important;
+        font-size: 16px !important;
         font-weight: 700 !important;
         color: #fff !important;
       }
@@ -2019,7 +2064,7 @@
       #${CONFIG.toolbarId} #${CONFIG.statusId} {
         font-size: 12px !important;
         line-height: 1.45 !important;
-        color: #8b98a5 !important;
+        color: var(--xuc-muted-text) !important;
       }
 
       #${CONFIG.toolbarId} .xuc-search-box,
@@ -2033,11 +2078,14 @@
         flex: 1 1 auto !important;
         min-width: 0 !important;
         padding: 10px 12px !important;
-        border: 1px solid #2f3336 !important;
-        border-radius: 10px !important;
-        background: #0f1419 !important;
+        border: 1px solid var(--xuc-control-border) !important;
+        border-radius: 6px !important;
+        background: #121316 !important;
         color: #fff !important;
         outline: none !important;
+        min-height: 40px !important;
+        font: inherit;
+        font-size: 13px !important;
       }
 
       #${CONFIG.toolbarId} input[type="text"]:focus {
@@ -2046,14 +2094,27 @@
 
       #${CONFIG.toolbarId} .xuc-panel button,
       #${CONFIG.toolbarId} .xuc-preset-btn {
-        border: 1px solid rgba(255, 255, 255, 0.14) !important;
-        border-radius: 10px !important;
+        border: 1px solid var(--xuc-control-border) !important;
+        border-radius: 6px !important;
         padding: 8px 10px !important;
-        background: #15202b !important;
+        min-width: 0 !important;
+        min-height: 36px !important;
+        background: var(--xuc-control-bg) !important;
         color: #fff !important;
         cursor: pointer !important;
         font-size: 12px !important;
-        line-height: 1.25 !important;
+        font-weight: 500 !important;
+        line-height: 1.5 !important;
+        transition: border-color 0.15s ease, background-color 0.15s ease !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-panel button:not(:disabled):hover {
+        border-color: #8b929f !important;
+        filter: brightness(1.12);
+      }
+
+      #${CONFIG.toolbarId} .xuc-panel button:not(:disabled):active {
+        filter: brightness(0.92);
       }
 
       #${CONFIG.toolbarId} .xuc-panel button:disabled {
@@ -2062,19 +2123,21 @@
       }
 
       #${CONFIG.toolbarId} .xuc-panel button.xuc-primary {
-        background: #1d9bf0 !important;
+        background: #096cba !important;
         border-color: transparent !important;
         color: #fff !important;
       }
 
       #${CONFIG.toolbarId} .xuc-panel button.xuc-accent {
-        background: #794bc4 !important;
-        border-color: transparent !important;
+        background: #203d33 !important;
+        color: #91e4bc !important;
+        border-color: #376651 !important;
       }
 
       #${CONFIG.toolbarId} .xuc-panel button.xuc-danger {
-        background: #f4212e !important;
-        border-color: transparent !important;
+        background: #3a2329 !important;
+        color: #ffa4ad !important;
+        border-color: #71414a !important;
       }
 
       #${CONFIG.toolbarId} .xuc-keyword-list {
@@ -2089,8 +2152,9 @@
         align-items: center !important;
         gap: 6px !important;
         padding: 5px 10px !important;
-        border-radius: 999px !important;
-        background: #1f2428 !important;
+        border-radius: 6px !important;
+        max-width: 100% !important;
+        background: #2a2c32 !important;
         color: #e7e9ea !important;
         font-size: 12px !important;
       }
@@ -2099,6 +2163,8 @@
         padding: 0 !important;
         width: 18px !important;
         height: 18px !important;
+        min-height: 18px !important;
+        flex-shrink: 0 !important;
         border: none !important;
         border-radius: 999px !important;
         background: transparent !important;
@@ -2121,6 +2187,23 @@
 
       #${CONFIG.toolbarId} input[type="range"] {
         width: 100% !important;
+        height: 24px !important;
+        margin: 0 !important;
+        accent-color: #329de9;
+        cursor: pointer;
+      }
+
+      #${CONFIG.toolbarId} .xuc-preset-btn.active {
+        background: #213c53 !important;
+        border-color: #329de9 !important;
+        color: #b9dfff !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-section-label {
+        margin: 16px 0 8px !important;
+        color: var(--xuc-muted-text) !important;
+        font-size: 12px !important;
+        font-weight: 600 !important;
       }
 
       #${CONFIG.toolbarId} .xuc-preset-row,
@@ -2132,22 +2215,45 @@
       }
 
       #${CONFIG.toolbarId} #${CONFIG.statusId} {
-        margin-top: 10px !important;
-        padding-top: 10px !important;
+        margin-top: 16px !important;
+        padding-top: 12px !important;
         border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
         white-space: pre-wrap !important;
+        overflow-wrap: anywhere !important;
       }
 
-      @media (max-width: 720px) {
+      #${CONFIG.toolbarId} .xuc-section-label + .xuc-action-row {
+        margin-top: 0 !important;
+      }
+
+      #${CONFIG.toolbarId} #${CONFIG.exportMdButtonId} {
+        grid-column: 1 / -1;
+      }
+
+      @media (max-width: 720px), (max-height: 480px) {
         #${CONFIG.toolbarId} {
-          right: 16px !important;
+          right: 12px !important;
           left: auto !important;
-          bottom: 146px !important;
+          bottom: calc(76px + env(safe-area-inset-bottom, 0px)) !important;
+        }
+
+        #${CONFIG.toolbarId} .xuc-toolbar-buttons {
+          flex-direction: row !important;
+          gap: 6px !important;
         }
 
         #${CONFIG.toolbarId} .xuc-panel {
-          right: calc(100% + 10px) !important;
-          width: min(100vw - 96px, 340px) !important;
+          right: 0 !important;
+          bottom: 54px !important;
+          width: min(360px, calc(100vw - 24px)) !important;
+          max-height: calc(100dvh - 210px - env(safe-area-inset-bottom, 0px)) !important;
+          padding: 16px !important;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #${CONFIG.toolbarId} * {
+          transition: none !important;
         }
       }
     `);
@@ -2287,7 +2393,7 @@
       #${CONFIG.toolbarId} .xuc-theme-btn {
         flex: 1 1 0 !important;
         padding: 9px 0 !important;
-        border-radius: 10px !important;
+        border-radius: 6px !important;
         border: 1px solid rgba(255, 255, 255, 0.14) !important;
         font-size: 12px !important;
         cursor: pointer !important;
@@ -2306,6 +2412,46 @@
         border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
       }
 
+      #${CONFIG.toolbarId} .xuc-auto-scroll-section {
+        margin-top: 14px !important;
+        padding-top: 14px !important;
+        border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-auto-scroll-head {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 10px !important;
+        font-size: 13px !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-auto-scroll-control {
+        display: flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        margin-top: 10px !important;
+        flex-wrap: wrap !important;
+        font-size: 13px !important;
+        color: var(--xuc-muted-text) !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-auto-scroll-control input[type="number"] {
+        width: 72px !important;
+        box-sizing: border-box !important;
+        padding: 8px 10px !important;
+        border: 1px solid var(--xuc-control-border) !important;
+        border-radius: 6px !important;
+        background: #121316 !important;
+        color: #fff !important;
+        outline: none !important;
+        text-align: right !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-auto-scroll-control input[type="number"]:focus {
+        border-color: #1d9bf0 !important;
+      }
+
       #${CONFIG.toolbarId} .xuc-slider-head {
         display: flex !important;
         justify-content: space-between !important;
@@ -2322,8 +2468,34 @@
       }
 
       #${CONFIG.toolbarId} .xuc-toggle-btn.active {
-        background: #1d9bf0 !important;
-        border-color: transparent !important;
+        background: #213c53 !important;
+        border-color: #329de9 !important;
+        color: #b9dfff !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-auto-scroll-toggle {
+        min-width: 76px !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-auto-scroll-toggle::before {
+        content: "";
+        display: inline-block;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #a9afb9;
+        margin-right: 8px;
+        vertical-align: middle;
+      }
+
+      #${CONFIG.toolbarId} .xuc-auto-scroll-toggle.active::before {
+        background: #77ddb1;
+      }
+
+      #${CONFIG.toolbarId} :is(.xuc-slider-head, .xuc-width-head) strong {
+        color: #8fccfa !important;
+        font-size: 12px !important;
+        font-variant-numeric: tabular-nums;
       }
     `);
 
@@ -2393,54 +2565,122 @@
   }
 
   let readObserver = null;
+  let readFrame = null;
+  let readPageUrl = "";
+  const readCandidates = new Map();
+
+  function getReadScrollParents(article) {
+    const parents = [];
+    for (let node = article.parentElement; node && node !== document.body; node = node.parentElement) {
+      if (/(auto|scroll|hidden|clip)/.test(getComputedStyle(node).overflowY)) {
+        parents.push(node);
+      }
+    }
+    return parents;
+  }
+
+  function getReadScrollOffset(parents) {
+    return window.scrollY + parents.reduce((total, node) => total + node.scrollTop, 0);
+  }
+
+  function hasReadCandidatePassed(candidate) {
+    // 节点被回收后不能再读取它的矩形，用最后可见位置和滚动差值判断。
+    const delta = getReadScrollOffset(candidate.parents) - candidate.offset;
+    return delta > 0 && candidate.bottom - delta < candidate.top;
+  }
+
+  function clearReadTracking() {
+    if (readObserver) {
+      readObserver.disconnect();
+      readObserver = null;
+    }
+    if (readFrame !== null) {
+      window.cancelAnimationFrame(readFrame);
+      readFrame = null;
+    }
+    document.removeEventListener("scroll", scheduleReadScan, true);
+    document.removeEventListener("visibilitychange", ensureReadObserver);
+    readCandidates.clear();
+    document.querySelectorAll("article.xuc-read").forEach((node) => node.classList.remove("xuc-read"));
+  }
+
+  function scheduleReadScan() {
+    if (readFrame === null) {
+      readFrame = window.requestAnimationFrame(() => {
+        readFrame = null;
+        ensureReadObserver();
+      });
+    }
+  }
 
   function ensureReadObserver() {
-    if (!state.dimRead) {
-      if (readObserver) {
-        readObserver.disconnect();
-        readObserver = null;
+    if (readPageUrl !== window.location.href) {
+      readCandidates.clear();
+      readPageUrl = window.location.href;
+    }
+
+    if (!state.dimRead || state.running || /\/status\/\d+/.test(window.location.pathname)) {
+      clearReadTracking();
+      return;
+    }
+
+    if (!readObserver && document.body) {
+      readObserver = new MutationObserver(scheduleReadScan);
+      readObserver.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["href"],
+      });
+      document.addEventListener("scroll", scheduleReadScan, { capture: true, passive: true });
+      document.addEventListener("visibilitychange", ensureReadObserver);
+    }
+
+    if (document.hidden) {
+      readCandidates.clear();
+      return;
+    }
+
+    // 先处理旧记录，再检查新节点，防止同一个节点换成另一条推文时串用已读状态。
+    for (const [article, candidate] of readCandidates) {
+      if (hasReadCandidatePassed(candidate)) {
+        state.readTweetIds.add(candidate.id);
       }
-      document.querySelectorAll("article.xuc-read").forEach((node) => node.classList.remove("xuc-read"));
-      document.querySelectorAll('article[data-xuc-observed="true"]').forEach((node) => {
-        node.removeAttribute("data-xuc-observed");
-      });
-      return;
-    }
-
-    // 推文详情页不做已读标记，避免把正在阅读的推文淡化
-    if (/\/status\/\d+/.test(window.location.pathname)) {
-      return;
-    }
-
-    if (!readObserver) {
-      readObserver = new IntersectionObserver((entries) => {
-        if (state.running) {
-          return;
-        }
-        entries.forEach((entry) => {
-          // 仅当卡片从视口顶部滚出（已被阅读过）才标记
-          if (!entry.isIntersecting && entry.boundingClientRect.bottom < 0) {
-            const id = getTweetId(getTweetUrl(entry.target));
-            if (id) {
-              state.readTweetIds.add(id);
-            }
-            entry.target.classList.add("xuc-read");
-          }
-        });
-      });
+      if (!article.isConnected || getTweetId(getTweetUrl(article)) !== candidate.id) {
+        readCandidates.delete(article);
+      }
     }
 
     document.querySelectorAll(TWEET_SELECTOR).forEach((article) => {
-      if (article.dataset.xucObserved !== "true") {
-        article.dataset.xucObserved = "true";
-        readObserver.observe(article);
+      const id = getTweetId(getTweetUrl(article));
+      article.dataset.xucObserved = "true";
+      article.classList.toggle("xuc-read", Boolean(id && state.readTweetIds.has(id)));
+      const rect = article.getBoundingClientRect();
+      const parents = getReadScrollParents(article);
+      let top = 0;
+      let bottom = window.innerHeight;
+      for (const parent of parents) {
+        const bounds = parent.getBoundingClientRect();
+        top = Math.max(top, bounds.top + parent.clientTop);
+        bottom = Math.min(bottom, bounds.top + parent.clientTop + parent.clientHeight);
       }
-      // 虚拟列表重挂载的卡片对照会话内已读集合补类
-      if (!article.classList.contains("xuc-read")) {
-        const id = getTweetId(getTweetUrl(article));
-        if (id && state.readTweetIds.has(id)) {
-          article.classList.add("xuc-read");
+      if (id && rect.width > 0 && rect.height > 0 &&
+          rect.right > 0 && rect.left < window.innerWidth &&
+          rect.bottom > top && rect.top < bottom && bottom > top) {
+        readCandidates.set(article, {
+          id,
+          parents,
+          top,
+          bottom: rect.bottom,
+          offset: getReadScrollOffset(parents),
+        });
+      } else if (readCandidates.has(article)) {
+        // 仍在 DOM 中时以实际位置为准，同时清理已离屏记录，避免后续布局变化误标。
+        if (rect.height > 0 && rect.bottom < top) {
+          state.readTweetIds.add(id);
+          article.classList.toggle("xuc-read", Boolean(id));
         }
+        readCandidates.delete(article);
       }
     });
   }
@@ -2480,6 +2720,67 @@
     if (dimReadToggle) {
       dimReadToggle.classList.toggle("active", state.dimRead);
     }
+
+    const autoScrollToggle = document.querySelector(`#${CONFIG.toolbarId} .xuc-auto-scroll-toggle`);
+    const autoScrollSeconds = document.getElementById("xuc-auto-scroll-seconds");
+    if (autoScrollToggle) {
+      autoScrollToggle.classList.toggle("active", state.autoScrollEnabled);
+      autoScrollToggle.textContent = state.autoScrollEnabled ? "开启" : "关闭";
+    }
+    if (autoScrollSeconds) {
+      autoScrollSeconds.value = String(state.autoScrollSeconds);
+    }
+  }
+
+  function canAutoScrollCurrentPage() {
+    return canCollectCurrentPage(window.location.pathname) && !/\/status\/\d+/.test(window.location.pathname);
+  }
+
+  function stopAutoScroll() {
+    if (autoScrollTimer !== null) {
+      window.clearInterval(autoScrollTimer);
+      autoScrollTimer = null;
+    }
+  }
+
+  function syncAutoScroll() {
+    stopAutoScroll();
+
+    if (!state.autoScrollEnabled || state.running || !canAutoScrollCurrentPage()) {
+      return;
+    }
+
+    autoScrollTimer = window.setInterval(() => {
+      if (state.running || !canAutoScrollCurrentPage()) {
+        stopAutoScroll();
+        return;
+      }
+
+      const maxScrollY = document.documentElement.scrollHeight - window.innerHeight;
+      if (window.scrollY >= maxScrollY - 4) {
+        stopAutoScroll();
+        return;
+      }
+
+      window.scrollBy({
+        top: Math.max(400, Math.floor(window.innerHeight * 0.8)),
+        behavior: "smooth",
+      });
+    }, state.autoScrollSeconds * 1000);
+  }
+
+  function updateAutoScrollEnabled(enabled) {
+    state.autoScrollEnabled = Boolean(enabled);
+    storageSet(CONFIG.autoScrollStorageKey, state.autoScrollEnabled);
+    syncAutoScroll();
+    updateReadingControls();
+  }
+
+  function updateAutoScrollSeconds(seconds) {
+    state.autoScrollSeconds = clampAutoScrollSeconds(seconds);
+    storageSet(CONFIG.autoScrollSecondsStorageKey, state.autoScrollSeconds);
+    syncAutoScroll();
+    updateReadingControls();
   }
 
   function resetHiddenTweets() {
@@ -2727,23 +3028,23 @@
     toolbar.id = CONFIG.toolbarId;
     toolbar.innerHTML = `
       <div class="xuc-toolbar-buttons">
-        <button type="button" class="xuc-toolbar-btn xuc-sidebar-toggle" title="显示或隐藏左侧导航">${icons.menu}</button>
-        <button type="button" class="xuc-toolbar-btn xuc-search-toggle" title="打开搜索">${icons.search}</button>
-        <button type="button" class="xuc-toolbar-btn xuc-layout-toggle" title="宽度与关键词过滤">${icons.layout}</button>
-        <button type="button" class="xuc-toolbar-btn xuc-collector-toggle" title="采集与导出">${icons.collector}</button>
+        <button type="button" class="xuc-toolbar-btn xuc-sidebar-toggle" title="显示或隐藏左侧导航" aria-label="显示或隐藏左侧导航">${icons.menu}</button>
+        <button type="button" class="xuc-toolbar-btn xuc-search-toggle" title="打开搜索" aria-label="打开搜索">${icons.search}</button>
+        <button type="button" class="xuc-toolbar-btn xuc-layout-toggle" title="打开布局与阅读设置" aria-label="打开布局与阅读设置">${icons.layout}</button>
+        <button type="button" class="xuc-toolbar-btn xuc-collector-toggle" title="打开采集与导出" aria-label="打开采集与导出">${icons.collector}</button>
       </div>
 
       <div class="xuc-panel xuc-search-panel">
         <div class="xuc-panel-title">搜索</div>
         <div class="xuc-search-box">
-          <input id="${CONFIG.searchInputId}" type="text" placeholder="搜索 X..." />
+          <input id="${CONFIG.searchInputId}" type="text" placeholder="搜索 X..." aria-label="搜索 X" />
           <button id="${CONFIG.searchSubmitId}" type="button" class="xuc-primary">搜索</button>
         </div>
       </div>
 
       <div class="xuc-panel xuc-layout-panel">
         <div class="xuc-panel-title">布局与阅读</div>
-        <div class="xuc-panel-subtitle">主题全站生效（深色主题配合 X 浅色模式效果最佳）；关键词过滤会隐藏命中的推文。</div>
+        <div class="xuc-section-label">主题</div>
         <div class="xuc-theme-row">
           <button type="button" class="xuc-theme-btn" data-theme="">默认</button>
           <button type="button" class="xuc-theme-btn" data-theme="paper">米黄</button>
@@ -2756,20 +3057,31 @@
             <span>正文字号</span>
             <strong id="${CONFIG.fontSizeValueId}">默认</strong>
           </div>
-          <input id="${CONFIG.fontSizeSliderId}" type="range" min="13" max="20" step="1" value="13" />
+          <input id="${CONFIG.fontSizeSliderId}" type="range" min="13" max="20" step="1" value="13" aria-label="正文字号" />
           <div class="xuc-slider-head">
             <span>正文行距</span>
             <strong id="${CONFIG.lineHeightValueId}">默认</strong>
           </div>
-          <input id="${CONFIG.lineHeightSliderId}" type="range" min="12" max="20" step="1" value="12" />
+          <input id="${CONFIG.lineHeightSliderId}" type="range" min="12" max="20" step="1" value="12" aria-label="正文行距" />
           <div class="xuc-toggle-row">
             <button type="button" class="xuc-toggle-btn xuc-serif-toggle">衬线字体</button>
             <button type="button" class="xuc-toggle-btn xuc-focus-toggle">聚焦模式</button>
             <button type="button" class="xuc-toggle-btn xuc-dimread-toggle">已读淡化</button>
           </div>
         </div>
+        <div class="xuc-auto-scroll-section">
+          <div class="xuc-auto-scroll-head">
+            <span>自动滚动</span>
+            <button type="button" class="xuc-toggle-btn xuc-auto-scroll-toggle" aria-label="自动滚动">关闭</button>
+          </div>
+          <div class="xuc-auto-scroll-control">
+            <label for="xuc-auto-scroll-seconds">每隔</label>
+            <input id="xuc-auto-scroll-seconds" type="number" min="1" max="60" step="1" aria-label="自动滚动间隔（秒）" />
+            <span>秒向下滚动</span>
+          </div>
+        </div>
         <div class="xuc-input-row" style="margin-top:14px;">
-          <input id="${CONFIG.keywordInputId}" type="text" placeholder="添加屏蔽关键词" />
+          <input id="${CONFIG.keywordInputId}" type="text" placeholder="添加屏蔽关键词" aria-label="屏蔽关键词" />
           <button id="${CONFIG.keywordAddButtonId}" type="button" class="xuc-primary">添加</button>
         </div>
         <div id="${CONFIG.keywordListId}" class="xuc-keyword-list"></div>
@@ -2778,7 +3090,7 @@
             <span>推文宽度</span>
             <strong id="${CONFIG.widthValueId}">${state.tweetWidth}px</strong>
           </div>
-          <input id="${CONFIG.widthSliderId}" type="range" min="${CONFIG.minTweetWidth}" max="${CONFIG.maxTweetWidth}" step="50" value="${state.tweetWidth}" />
+          <input id="${CONFIG.widthSliderId}" type="range" min="${CONFIG.minTweetWidth}" max="${CONFIG.maxTweetWidth}" step="50" value="${state.tweetWidth}" aria-label="推文宽度" />
           <div class="xuc-preset-row">
             <button type="button" class="xuc-preset-btn" data-width="600">窄</button>
             <button type="button" class="xuc-preset-btn" data-width="800">中</button>
@@ -2791,12 +3103,19 @@
       <div id="${CONFIG.panelId}" class="xuc-panel">
         <div class="xuc-panel-title">采集与导出</div>
         <div id="${CONFIG.scopeId}">当前页面: 检测中...</div>
+        <div class="xuc-section-label">采集控制</div>
         <div class="xuc-action-row">
           <button id="${CONFIG.startButtonId}" type="button" class="xuc-primary">采集推文</button>
           <button id="${CONFIG.stopButtonId}" type="button" class="xuc-danger">停止</button>
+        </div>
+        <div class="xuc-section-label">数据导出</div>
+        <div class="xuc-action-row">
           <button id="${CONFIG.exportJsonButtonId}" type="button">导出 JSON</button>
           <button id="${CONFIG.exportCsvButtonId}" type="button">导出 CSV</button>
           <button id="${CONFIG.exportMdButtonId}" type="button">导出 Markdown</button>
+        </div>
+        <div class="xuc-section-label">媒体与同步</div>
+        <div class="xuc-action-row">
           <button id="${CONFIG.downloadMediaButtonId}" type="button" class="xuc-accent">下载媒体</button>
           <button id="${CONFIG.syncConfigButtonId}" type="button">书签同步配置</button>
         </div>
@@ -2906,12 +3225,21 @@
       updateReadingControls();
     });
 
+    toolbar.querySelector(".xuc-auto-scroll-toggle").addEventListener("click", () => {
+      updateAutoScrollEnabled(!state.autoScrollEnabled);
+    });
+
+    toolbar.querySelector("#xuc-auto-scroll-seconds").addEventListener("change", (event) => {
+      updateAutoScrollSeconds(event.target.value);
+    });
+
     toolbar.querySelector(`#${CONFIG.startButtonId}`).addEventListener("click", () => {
       runCollection().catch((error) => {
         console.error("[X Collector] runCollection failed:", error);
         state.running = false;
         state.stopRequested = false;
         updateButtons();
+        ensureReadObserver();
         setStatus(`采集失败: ${error.message}`);
       });
     });
@@ -2934,6 +3262,7 @@
     updateReadingControls();
     updateScopeInfo();
     updateButtons();
+    syncAutoScroll();
     state.toolbarReady = true;
   }
 
@@ -2952,6 +3281,7 @@
     updateReadingControls();
     updateScopeInfo();
     syncPanelVisibility();
+    syncAutoScroll();
   }
 
   const refreshInterface = debounce(() => {
@@ -2970,6 +3300,7 @@
     tagElevatedBars();
     updateSyncWidget();
     updateButtons();
+    syncAutoScroll();
   }, 180);
 
   function installHistoryWatcher() {
@@ -2989,6 +3320,8 @@
       }
       history[methodName] = function wrappedHistoryMethod(...args) {
         const result = original.apply(this, args);
+        stopAutoScroll();
+        ensureReadObserver();
         window.setTimeout(refreshInterface, 0);
         return result;
       };
@@ -2999,6 +3332,11 @@
     wrap("replaceState");
     window.addEventListener("popstate", refreshInterface);
     window.addEventListener("hashchange", refreshInterface);
+    window.addEventListener("popstate", ensureReadObserver);
+    window.addEventListener("hashchange", ensureReadObserver);
+    window.addEventListener("pagehide", clearReadTracking);
+    window.addEventListener("pageshow", ensureReadObserver);
+    window.addEventListener("beforeunload", stopAutoScroll, { once: true });
     document.addEventListener("click", closePanels);
   }
 
