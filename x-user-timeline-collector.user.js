@@ -162,7 +162,7 @@
   // 字号/行距返回 0 表示不覆盖 X 默认值
   function clampFontSize(value) {
     const numeric = Number(value);
-    if (!Number.isFinite(numeric) || numeric < 14 || numeric > 20) {
+    if (!Number.isFinite(numeric) || numeric < 10 || numeric > 20) {
       return 0;
     }
     return Math.round(numeric);
@@ -170,7 +170,7 @@
 
   function clampLineHeight(value) {
     const numeric = Number(value);
-    if (!Number.isFinite(numeric) || numeric < 1.3 || numeric > 2) {
+    if (!Number.isFinite(numeric) || numeric < 0.6 || numeric > 2) {
       return 0;
     }
     return Math.round(numeric * 10) / 10;
@@ -1960,17 +1960,17 @@
         flex-direction: column !important;
         align-items: center !important;
         justify-content: flex-end !important;
-        gap: 8px !important;
+        gap: 12px !important;
         width: auto !important;
       }
 
       /* 固定尺寸让悬停和选中状态不改变工具栏布局。 */
       #${CONFIG.toolbarId} .xuc-toolbar-btn {
-        width: 44px !important;
-        height: 44px !important;
+        width: 55px !important;
+        height: 55px !important;
         padding: 0 !important;
         border: 1px solid #d4d8de !important;
-        border-radius: 8px !important;
+        border-radius: 16px !important;
         position: relative !important;
         display: inline-flex !important;
         align-items: center !important;
@@ -1993,8 +1993,8 @@
       }
 
       #${CONFIG.toolbarId} .xuc-toolbar-btn svg {
-        width: 22px !important;
-        height: 22px !important;
+        width: 30px !important;
+        height: 30px !important;
         fill: currentColor !important;
       }
 
@@ -2239,12 +2239,12 @@
 
         #${CONFIG.toolbarId} .xuc-toolbar-buttons {
           flex-direction: row !important;
-          gap: 6px !important;
+          gap: 8px !important;
         }
 
         #${CONFIG.toolbarId} .xuc-panel {
           right: 0 !important;
-          bottom: 54px !important;
+          bottom: 53px !important;
           width: min(360px, calc(100vw - 24px)) !important;
           max-height: calc(100dvh - 210px - env(safe-area-inset-bottom, 0px)) !important;
           padding: 16px !important;
@@ -2696,7 +2696,7 @@
       fontValue.textContent = state.fontSize > 0 ? `${state.fontSize}px` : "默认";
     }
     if (fontSlider) {
-      fontSlider.value = String(state.fontSize > 0 ? state.fontSize : 13);
+      fontSlider.value = String(state.fontSize > 0 ? state.fontSize : 9);
     }
 
     const lineHeightValue = document.getElementById(CONFIG.lineHeightValueId);
@@ -2705,7 +2705,7 @@
       lineHeightValue.textContent = state.lineHeight > 0 ? state.lineHeight.toFixed(1) : "默认";
     }
     if (lineHeightSlider) {
-      lineHeightSlider.value = String(state.lineHeight > 0 ? Math.round(state.lineHeight * 10) : 12);
+      lineHeightSlider.value = String(state.lineHeight > 0 ? Math.round(state.lineHeight * 10) : 5);
     }
 
     const serifToggle = document.querySelector(`#${CONFIG.toolbarId} .xuc-serif-toggle`);
@@ -3057,12 +3057,12 @@
             <span>正文字号</span>
             <strong id="${CONFIG.fontSizeValueId}">默认</strong>
           </div>
-          <input id="${CONFIG.fontSizeSliderId}" type="range" min="13" max="20" step="1" value="13" aria-label="正文字号" />
+          <input id="${CONFIG.fontSizeSliderId}" type="range" min="9" max="20" step="1" value="9" aria-label="正文字号" />
           <div class="xuc-slider-head">
             <span>正文行距</span>
             <strong id="${CONFIG.lineHeightValueId}">默认</strong>
           </div>
-          <input id="${CONFIG.lineHeightSliderId}" type="range" min="12" max="20" step="1" value="12" aria-label="正文行距" />
+          <input id="${CONFIG.lineHeightSliderId}" type="range" min="5" max="20" step="1" value="5" aria-label="正文行距" />
           <div class="xuc-toggle-row">
             <button type="button" class="xuc-toggle-btn xuc-serif-toggle">衬线字体</button>
             <button type="button" class="xuc-toggle-btn xuc-focus-toggle">聚焦模式</button>
@@ -3190,7 +3190,7 @@
 
     toolbar.querySelector(`#${CONFIG.fontSizeSliderId}`).addEventListener("input", (event) => {
       const raw = Number(event.target.value);
-      state.fontSize = raw <= 13 ? 0 : clampFontSize(raw);
+      state.fontSize = raw <= 9 ? 0 : clampFontSize(raw);
       storageSet(CONFIG.fontSizeStorageKey, state.fontSize);
       applyReadingPrefs();
       updateReadingControls();
@@ -3198,7 +3198,7 @@
 
     toolbar.querySelector(`#${CONFIG.lineHeightSliderId}`).addEventListener("input", (event) => {
       const raw = Number(event.target.value) / 10;
-      state.lineHeight = raw <= 1.2 ? 0 : clampLineHeight(raw);
+      state.lineHeight = raw <= 0.5 ? 0 : clampLineHeight(raw);
       storageSet(CONFIG.lineHeightStorageKey, state.lineHeight);
       applyReadingPrefs();
       updateReadingControls();
