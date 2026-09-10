@@ -1,8 +1,11 @@
+保存为 `x-interface-enhancer.user.js`，或直接完整复制到 Tampermonkey 中替换旧脚本。已合并紧凑布局、毛玻璃效果和跟随 X 页面配色的面板。
+
+```javascript
 // ==UserScript==
 // @name         X 界面增强工具
 // @namespace    https://example.local/
-// @version      1.1.0
-// @description  X 页面布局、主题、阅读设置、关键词过滤和自动滚动。不包含推文采集、导出、下载或书签同步。
+// @version      1.2.0
+// @description  紧凑毛玻璃面板、页面主题、布局与阅读设置、关键词过滤、已浏览淡化和自动滚动。不包含推文采集、导出、下载或书签同步。
 // @author       Codex
 // @match        https://x.com/*
 // @match        https://twitter.com/*
@@ -22,21 +25,17 @@
     toolbarId: "x-merged-toolbar",
     notificationId: "xuc-notification-container",
     styleId: "xuc-interface-styles",
-
+    defaultWidth: 900,
     minWidth: 500,
     maxWidth: 1400,
-    defaultWidth: 900,
-
+    defaultSeconds: 5,
     minSeconds: 1,
     maxSeconds: 60,
-    defaultSeconds: 5,
-
     readMinVisibleMs: 700,
     readScanInterval: 100,
     maxReadIds: 2000,
     maxReadTimelines: 5,
-
-    mutationDelay: 100,
+    mutationDelay: 120,
     routeCheckInterval: 800,
     manualScrollPauseMs: 15000,
     bottomConfirmations: 3,
@@ -105,10 +104,12 @@
   }
 
   function clampSeconds(value) {
-    const n = numberOr(value, CONFIG.defaultSeconds);
     return Math.min(
       CONFIG.maxSeconds,
-      Math.max(CONFIG.minSeconds, Math.round(n))
+      Math.max(
+        CONFIG.minSeconds,
+        Math.round(numberOr(value, CONFIG.defaultSeconds))
+      )
     );
   }
 
@@ -119,7 +120,6 @@
 
   function normalizeLineHeight(value) {
     const n = numberOr(value, 0);
-    // 保留旧版 0.6～0.9 的设置，但迁移到更安全的 1.0。
     return n >= 0.6 && n <= 2
       ? Math.max(1, Math.round(n * 10) / 10)
       : 0;
@@ -127,7 +127,6 @@
 
   function normalizeKeywords(value) {
     if (!Array.isArray(value)) return [];
-
     const seen = new Set();
     const result = [];
 
@@ -166,45 +165,42 @@
     autoScrollSeconds: clampSeconds(
       storageGet(KEYS.autoScrollSeconds, CONFIG.defaultSeconds)
     ),
-    // 默认保留旧版自动展开行为，可手动关闭。
     autoExpand: Boolean(storageGet(KEYS.autoExpand, true)),
     openPanel: "",
   };
 
   let started = false;
+  let stylesInjected = false;
   let currentUrl = "";
   let routeTimer = null;
   let domObserver = null;
   let mutationTimer = null;
   let themeTimer = null;
+  let saveTimer = null;
+  let appliedBody = null;
 
-  let keywordVersion = 0;
-  let lowerKeywords = state.blockedKeywords.map(s => s.toLowerCase());
-
+  const pendingSaves = new Map();
   const dirtyTweets = new Set();
   const trackedTweets = new Set();
   const hiddenTweets = new Set();
 
-  let tweetCache = new WeakMap();
+  let keywordVersion = 0;
+  let lowerKeywords = state.blockedKeywords.map(s => s.toLowerCase());
+  const tweetCache = new WeakMap();
+
   let expansionAttempts = new WeakMap();
   const expandedButtons = new WeakSet();
 
-  const pendingSaves = new Map();
-  let saveTimer = null;
-
-  // 已读数据只保存在当前页面会话内。
   const readTimelines = new Map();
   let activeTimelineKey = "";
   let activeReadIds = new Set();
   let readObserver = null;
   let readTimer = null;
-  let readFrame = null;
-
   const readObserved = new Map();
   const readCandidates = new Map();
 
   let autoTimer = null;
-  let autoStatus = "";
+  let autoStatus = "已关闭";
   let bottomChecks = 0;
   let lastDocumentHeight = 0;
   let manualPauseUntil = 0;
@@ -227,18 +223,30 @@
   function flushSaves() {
     window.clearTimeout(saveTimer);
     saveTimer = null;
-
-    for (const [key, value] of pendingSaves) {
-      storageSet(key, value);
-    }
+    for (const [key, value] of pendingSaves) storageSet(key, value);
     pendingSaves.clear();
   }
 
-  function isOwned(node) {
-    const element = node?.nodeType === Node.ELEMENT_NODE
+  function asElement(node) {
+    return node?.nodeType === Node.ELEMENT_NODE
       ? node
       : node?.parentElement;
-    return Boolean(element?.closest(OWNED));
+  }
+
+  function isOwned(node) {
+    return Boolean(asElement(node)?.closest(OWNED));
+  }
+
+  function setText(id, value) {
+    const node = document.getElementById(id);
+    if (node && node.textContent !== value) node.textContent = value;
+  }
+
+  function setInputValue(id, value) {
+    const input = document.getElementById(id);
+    if (input && input.value !== String(value)) {
+      input.value = String(value);
+    }
   }
 
   function showNotification(message, type = "info") {
@@ -265,8 +273,8 @@
   }
 
   function getTweetId(article) {
-    const anchor = article.querySelector("time")?.closest("a");
-    const href = anchor?.getAttribute("href") || "";
+    const href = article.querySelector("time")
+      ?.closest("a")?.getAttribute("href") || "";
     return href.match(/\/status\/(\d+)/)?.[1] || "";
   }
 
@@ -274,66 +282,10 @@
     return /\/status\/\d+/.test(window.location.pathname);
   }
 
-  function getTimelineKey() {
-    const url = new URL(window.location.href);
-    const path = url.pathname.replace(/\/+$/, "") || "/";
-
-    // 保留搜索、列表等有意义参数，去掉常见来源追踪参数。
-    for (const key of ["src", "s", "t", "ref_src", "ref_url"]) {
-      url.searchParams.delete(key);
-    }
-    url.searchParams.sort();
-
-    const selectedTab = document.querySelector(
-      '[data-testid="primaryColumn"] [role="tab"][aria-selected="true"]'
-    );
-
-    const tab = selectedTab
-      ? [
-          selectedTab.getAttribute("href") || "",
-          selectedTab.textContent?.trim() || "",
-        ].join("|")
-      : "";
-
-    return `${path}?${url.searchParams.toString()}#${tab}`;
-  }
-
-  function selectReadTimeline() {
-    // 详情页不替换时间线记录，返回时继续使用原记录。
-    if (isDetailPage()) return false;
-
-    const key = getTimelineKey();
-    if (key === activeTimelineKey) return false;
-
-    let ids = readTimelines.get(key);
-    if (!ids) ids = new Set();
-
-    // Map 插入顺序用于简单 LRU。
-    readTimelines.delete(key);
-    readTimelines.set(key, ids);
-
-    while (readTimelines.size > CONFIG.maxReadTimelines) {
-      readTimelines.delete(readTimelines.keys().next().value);
-    }
-
-    activeTimelineKey = key;
-    activeReadIds = ids;
-    return true;
-  }
-
-  function rememberRead(id) {
-    if (!id || activeReadIds.has(id)) return;
-
-    activeReadIds.add(id);
-    while (activeReadIds.size > CONFIG.maxReadIds) {
-      activeReadIds.delete(activeReadIds.values().next().value);
-    }
-  }
-
-  // ---------- 样式 ----------
+  // ==================== 页面与面板样式 ====================
 
   function injectStyles() {
-    if (document.getElementById(CONFIG.styleId)) return;
+    if (stylesInjected || document.getElementById(CONFIG.styleId)) return;
 
     const css = `
       :root {
@@ -401,18 +353,16 @@
       }
 
       body.xuc-serif [data-testid="tweetText"] {
-        font-family:
-          Georgia, "Times New Roman", "Source Han Serif SC",
+        font-family: Georgia, "Times New Roman", "Source Han Serif SC",
           "Noto Serif SC", STSong, serif !important;
       }
 
       body.xuc-focus-mode ${TWEET}
-      [role="group"]:has([data-testid="reply"]),
+        [role="group"]:has([data-testid="reply"]),
       body.xuc-focus-mode ${TWEET} [data-testid="socialContext"] {
         display: none !important;
       }
 
-      /* 只隐藏 article，不直接修改虚拟列表 cell 的内联样式。 */
       ${TWEET}.xuc-keyword-hidden {
         display: none !important;
       }
@@ -506,7 +456,21 @@
         color: var(--xuc-secondary) !important;
       }
 
+      /* ---------- 面板主题变量 ---------- */
+
       #${CONFIG.toolbarId} {
+        --glass-rgb: 255, 255, 255;
+        --panel-text: #0f1419;
+        --panel-muted: #536471;
+        --panel-border: rgba(15, 20, 25, .14);
+        --panel-control: rgba(15, 20, 25, .045);
+        --panel-hover: rgba(15, 20, 25, .085);
+        --panel-input: rgba(255, 255, 255, .38);
+        --panel-accent: #087ac1;
+        --panel-active: rgba(29, 155, 240, .14);
+        --panel-highlight: rgba(255, 255, 255, .8);
+        --panel-shadow: rgba(15, 20, 25, .18);
+
         position: fixed !important;
         right: 20px !important;
         bottom: 146px !important;
@@ -514,14 +478,70 @@
         display: flex !important;
         flex-direction: column !important;
         align-items: flex-end !important;
-        color: #f2f3f5 !important;
-        font: 13px/1.5 system-ui, -apple-system,
+        color: var(--panel-text) !important;
+        font: 12px/1.4 system-ui, -apple-system,
           BlinkMacSystemFont, "Segoe UI", sans-serif !important;
-        color-scheme: dark;
+        letter-spacing: normal !important;
+        color-scheme: light;
         isolation: isolate;
-        --panel-bg: rgba(24,29,36,.92);
-        --control-bg: rgba(255,255,255,.08);
-        --control-border: rgba(255,255,255,.18);
+      }
+
+      #${CONFIG.toolbarId}[data-native-theme="dim"] {
+        --glass-rgb: 21, 32, 43;
+        --panel-text: #f7f9f9;
+        --panel-muted: #a1aebc;
+        --panel-border: rgba(139, 152, 165, .25);
+        --panel-control: rgba(247, 249, 249, .065);
+        --panel-hover: rgba(247, 249, 249, .12);
+        --panel-input: rgba(10, 18, 26, .3);
+        --panel-accent: #71c2fa;
+        --panel-active: rgba(29, 155, 240, .21);
+        --panel-highlight: rgba(255, 255, 255, .16);
+        --panel-shadow: rgba(0, 0, 0, .34);
+        color-scheme: dark;
+      }
+
+      #${CONFIG.toolbarId}[data-native-theme="oled"] {
+        --glass-rgb: 0, 0, 0;
+        --panel-text: #e7e9ea;
+        --panel-muted: #a0a5aa;
+        --panel-border: rgba(231, 233, 234, .18);
+        --panel-control: rgba(231, 233, 234, .075);
+        --panel-hover: rgba(231, 233, 234, .13);
+        --panel-input: rgba(0, 0, 0, .25);
+        --panel-accent: #71c2fa;
+        --panel-active: rgba(29, 155, 240, .22);
+        --panel-highlight: rgba(255, 255, 255, .19);
+        --panel-shadow: rgba(0, 0, 0, .42);
+        color-scheme: dark;
+      }
+
+      #${CONFIG.toolbarId}[data-native-theme="paper"] {
+        --glass-rgb: 247, 241, 227;
+        --panel-text: #3e3428;
+        --panel-muted: #746752;
+        --panel-border: rgba(116, 103, 82, .22);
+        --panel-control: rgba(116, 103, 82, .07);
+        --panel-hover: rgba(116, 103, 82, .12);
+        --panel-input: rgba(251, 247, 236, .4);
+        --panel-accent: #075f9f;
+        --panel-active: rgba(7, 95, 159, .12);
+        --panel-highlight: rgba(255, 252, 240, .85);
+        --panel-shadow: rgba(62, 52, 40, .2);
+      }
+
+      #${CONFIG.toolbarId}[data-native-theme="green"] {
+        --glass-rgb: 204, 232, 207;
+        --panel-text: #2f3e33;
+        --panel-muted: #526858;
+        --panel-border: rgba(82, 104, 88, .22);
+        --panel-control: rgba(47, 62, 51, .055);
+        --panel-hover: rgba(47, 62, 51, .11);
+        --panel-input: rgba(218, 240, 220, .4);
+        --panel-accent: #075f9f;
+        --panel-active: rgba(7, 95, 159, .12);
+        --panel-highlight: rgba(239, 255, 240, .8);
+        --panel-shadow: rgba(47, 62, 51, .2);
       }
 
       #${CONFIG.toolbarId},
@@ -534,149 +554,168 @@
         font: inherit !important;
       }
 
-      #${CONFIG.toolbarId} :is(button,input):focus-visible {
-        outline: 2px solid #69bfff !important;
-        outline-offset: 3px !important;
-      }
-
-      #${CONFIG.toolbarId} .xuc-toolbar-buttons {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-      }
-
-      #${CONFIG.toolbarId} .xuc-toolbar-btn {
-        width: 55px !important;
-        height: 55px !important;
-        padding: 0 !important;
-        border: 1px solid #d4d8de !important;
-        border-radius: 16px !important;
-        display: inline-flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-        cursor: pointer !important;
-        background: #fff !important;
-        color: #0f1419 !important;
-        box-shadow: 0 3px 12px rgba(0,0,0,.12);
-      }
-
-      #${CONFIG.toolbarId} .xuc-toolbar-btn.active {
-        background: #e5f2ff !important;
-        border-color: #1685db !important;
-        color: #0866b0 !important;
-      }
-
-      #${CONFIG.toolbarId} .xuc-sidebar-toggle.active {
-        background: #e9f8f1 !important;
-        border-color: #25875b !important;
-        color: #146c46 !important;
-      }
-
-      #${CONFIG.toolbarId} .xuc-toolbar-btn svg {
-        width: 28px;
-        height: 28px;
-        fill: currentColor;
-      }
-
-      #${CONFIG.toolbarId} .xuc-panel {
-        position: absolute !important;
-        right: calc(100% + 14px) !important;
-        bottom: 0 !important;
-        width: min(380px,calc(100vw - 90px)) !important;
-        max-height: min(680px,calc(100dvh - 180px)) !important;
-        overflow-y: auto !important;
-        padding: 18px !important;
-        border: 1px solid var(--control-border) !important;
-        border-radius: 16px !important;
-        background: var(--panel-bg) !important;
-        color: #f2f3f5 !important;
-        box-shadow: 0 22px 60px rgba(0,0,0,.36);
-        backdrop-filter: blur(18px) saturate(145%);
-        -webkit-backdrop-filter: blur(18px) saturate(145%);
-        overscroll-behavior: contain;
-        scrollbar-width: thin;
-        overflow-wrap: anywhere;
+      #${CONFIG.toolbarId} :is(button, input):focus-visible {
+        outline: 2px solid var(--panel-accent) !important;
+        outline-offset: 2px !important;
       }
 
       #${CONFIG.toolbarId} [hidden] {
         display: none !important;
       }
 
+      #${CONFIG.toolbarId} .xuc-toolbar-buttons {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      #${CONFIG.toolbarId} .xuc-toolbar-btn {
+        width: 44px !important;
+        height: 44px !important;
+        padding: 0 !important;
+        border: 1px solid var(--panel-border) !important;
+        border-radius: 13px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        cursor: pointer !important;
+        background: rgba(var(--glass-rgb), .64) !important;
+        color: var(--panel-text) !important;
+        -webkit-backdrop-filter: blur(22px) saturate(170%);
+        backdrop-filter: blur(22px) saturate(170%);
+        box-shadow:
+          0 4px 16px var(--panel-shadow),
+          inset 0 1px 0 var(--panel-highlight);
+      }
+
+      #${CONFIG.toolbarId} .xuc-toolbar-btn svg {
+        width: 23px;
+        height: 23px;
+        fill: currentColor;
+      }
+
+      #${CONFIG.toolbarId} .xuc-toolbar-btn:hover,
+      #${CONFIG.toolbarId} .xuc-toolbar-btn.active {
+        background: var(--panel-active) !important;
+        border-color: var(--panel-accent) !important;
+        color: var(--panel-accent) !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-panel {
+        position: absolute !important;
+        right: calc(100% + 10px) !important;
+        bottom: 0 !important;
+        width: min(340px, calc(100vw - 84px)) !important;
+        max-height: min(620px, calc(100dvh - 180px)) !important;
+        overflow-y: auto !important;
+        padding: 13px !important;
+        border: 1px solid var(--panel-border) !important;
+        border-radius: 15px !important;
+
+        /* 调小 .62 会更加透明，调大则更易阅读。 */
+        background: rgba(var(--glass-rgb), .62) !important;
+        color: var(--panel-text) !important;
+
+        -webkit-backdrop-filter: blur(30px) saturate(180%) !important;
+        backdrop-filter: blur(30px) saturate(180%) !important;
+        box-shadow:
+          0 16px 42px var(--panel-shadow),
+          inset 0 1px 0 var(--panel-highlight),
+          inset 0 0 0 1px rgba(255, 255, 255, .035);
+        overscroll-behavior: contain;
+        scrollbar-width: thin;
+        scrollbar-color: var(--panel-border) transparent;
+        overflow-wrap: anywhere;
+      }
+
       #${CONFIG.toolbarId} .xuc-panel-title {
-        margin: 0 0 14px;
-        padding-bottom: 12px;
-        border-bottom: 1px solid var(--control-border);
-        font-size: 17px;
+        margin: 0 0 10px;
+        padding-bottom: 9px;
+        border-bottom: 1px solid var(--panel-border);
+        color: var(--panel-text);
+        font-size: 15px;
         font-weight: 700;
+        line-height: 1.3;
       }
 
       #${CONFIG.toolbarId} .xuc-label {
-        margin: 15px 0 8px;
-        color: #b5bfcc;
-        font-size: 12px;
+        margin: 10px 0 6px;
+        color: var(--panel-muted);
+        font-size: 11px;
       }
 
       #${CONFIG.toolbarId} .xuc-row,
       #${CONFIG.toolbarId} .xuc-head {
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 6px;
       }
 
       #${CONFIG.toolbarId} .xuc-head {
         justify-content: space-between;
-        margin: 14px 0 6px;
-      }
-
-      #${CONFIG.toolbarId} output {
-        color: #8fccfa;
-        font-variant-numeric: tabular-nums;
+        margin: 10px 0 3px;
       }
 
       #${CONFIG.toolbarId} .xuc-grid {
         display: grid;
-        grid-template-columns: repeat(2,minmax(0,1fr));
-        gap: 8px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
       }
 
       #${CONFIG.toolbarId} .xuc-themes {
-        grid-template-columns: repeat(3,minmax(0,1fr));
+        grid-template-columns: repeat(5, minmax(0, 1fr));
       }
 
       #${CONFIG.toolbarId} .xuc-panel button {
-        min-height: 38px;
-        padding: 8px 10px;
-        border: 1px solid var(--control-border);
-        border-radius: 9px;
-        background: var(--control-bg);
-        color: #f7f9fa;
+        min-height: 30px;
+        padding: 5px 8px;
+        border: 1px solid var(--panel-border);
+        border-radius: 8px;
+        background: var(--panel-control);
+        color: var(--panel-text);
         cursor: pointer;
+        line-height: 1.35 !important;
+        transition:
+          background-color .15s ease,
+          border-color .15s ease;
+      }
+
+      #${CONFIG.toolbarId} .xuc-themes button {
+        padding-inline: 3px;
+        white-space: nowrap;
+        font-size: 11px !important;
       }
 
       #${CONFIG.toolbarId} .xuc-panel button:hover {
-        background: rgba(255,255,255,.15);
-        border-color: #7cc4ff;
+        background: var(--panel-hover);
+        border-color: var(--panel-accent);
       }
 
       #${CONFIG.toolbarId} .xuc-panel button.active {
-        background: rgba(34,119,181,.42);
-        border-color: #62b8f2;
-        color: #d9efff;
+        background: var(--panel-active);
+        border-color: var(--panel-accent);
+        color: var(--panel-accent);
       }
 
       #${CONFIG.toolbarId} .xuc-panel button.xuc-primary {
-        background: #096cba;
+        background: #1d9bf0;
+        border-color: transparent;
+        color: #fff;
+      }
+
+      #${CONFIG.toolbarId} .xuc-panel button.xuc-primary:hover {
+        background: #168bd8;
       }
 
       #${CONFIG.toolbarId} input[type="text"],
       #${CONFIG.toolbarId} input[type="number"] {
         min-width: 0;
-        min-height: 40px;
-        padding: 9px 11px;
-        border: 1px solid var(--control-border);
-        border-radius: 7px;
-        background: #121316;
-        color: #fff;
+        min-height: 32px;
+        padding: 6px 8px;
+        border: 1px solid var(--panel-border);
+        border-radius: 8px;
+        background: var(--panel-input);
+        color: var(--panel-text);
       }
 
       #${CONFIG.toolbarId} input[type="text"] {
@@ -685,54 +724,80 @@
       }
 
       #${CONFIG.toolbarId} input[type="number"] {
-        width: 74px;
+        width: 62px;
         text-align: center;
+      }
+
+      #${CONFIG.toolbarId} input::placeholder {
+        color: var(--panel-muted);
+        opacity: .85;
       }
 
       #${CONFIG.toolbarId} input[type="range"] {
         width: 100%;
-        height: 24px;
+        height: 20px;
         margin: 0;
-        accent-color: #58b4ef;
+        accent-color: var(--panel-accent);
         cursor: pointer;
       }
 
+      #${CONFIG.toolbarId} output {
+        color: var(--panel-accent);
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+      }
+
       #${CONFIG.toolbarId} .xuc-section {
-        margin-top: 16px;
-        padding-top: 14px;
-        border-top: 1px solid var(--control-border);
+        margin-top: 11px;
+        padding-top: 10px;
+        border-top: 1px solid var(--panel-border);
       }
 
       #${CONFIG.toolbarId} .xuc-hint {
-        margin: 8px 0 0;
-        color: #b5bfcc;
-        font-size: 12px;
+        margin: 6px 0 0;
+        color: var(--panel-muted);
+        font-size: 11px;
+        line-height: 1.4;
       }
 
       #${CONFIG.toolbarId} .xuc-keywords {
         display: flex;
         flex-wrap: wrap;
-        gap: 8px;
-        margin-top: 12px;
+        gap: 5px;
+        margin-top: 8px;
+      }
+
+      #${CONFIG.toolbarId} .xuc-keywords:empty {
+        display: none;
       }
 
       #${CONFIG.toolbarId} .xuc-keyword {
         display: inline-flex;
         align-items: center;
-        gap: 6px;
+        gap: 4px;
         max-width: 100%;
-        padding: 5px 8px;
-        border-radius: 8px;
-        background: rgba(255,255,255,.09);
+        padding: 3px 6px;
+        border: 1px solid var(--panel-border);
+        border-radius: 7px;
+        background: var(--panel-control);
       }
 
       #${CONFIG.toolbarId} .xuc-keyword button {
-        width: 24px;
-        min-height: 24px;
+        width: 22px;
+        min-height: 22px;
         padding: 0;
         border: none;
         background: transparent;
-        font-size: 18px !important;
+        color: var(--panel-muted);
+        font-size: 17px !important;
+      }
+
+      #${CONFIG.toolbarId} .xuc-top-gap {
+        margin-top: 9px;
+      }
+
+      #${CONFIG.toolbarId} .xuc-no-top {
+        margin-top: 0;
       }
 
       #${CONFIG.notificationId} {
@@ -747,13 +812,13 @@
       }
 
       #${CONFIG.notificationId} .xuc-notice {
-        max-width: min(360px,calc(100vw - 32px));
+        max-width: min(360px, calc(100vw - 32px));
         padding: 10px 14px;
         border-radius: 10px;
         background: #176ca7;
         color: #fff;
-        font: 13px/1.45 system-ui,sans-serif;
-        box-shadow: 0 10px 24px rgba(0,0,0,.22);
+        font: 13px/1.45 system-ui, sans-serif;
+        box-shadow: 0 10px 24px rgba(0, 0, 0, .22);
       }
 
       #${CONFIG.notificationId} .xuc-notice-success {
@@ -767,23 +832,37 @@
       @media(max-width:720px),(max-height:480px) {
         #${CONFIG.toolbarId} {
           right: 12px !important;
-          bottom: calc(76px + env(safe-area-inset-bottom,0px)) !important;
+          bottom: calc(
+            76px + env(safe-area-inset-bottom, 0px)
+          ) !important;
         }
 
         #${CONFIG.toolbarId} .xuc-toolbar-buttons {
           flex-direction: row;
-          gap: 8px;
         }
 
         #${CONFIG.toolbarId} .xuc-panel {
           right: 0 !important;
-          bottom: 67px !important;
-          width: min(380px,calc(100vw - 24px)) !important;
+          bottom: 54px !important;
+          width: min(340px, calc(100vw - 24px)) !important;
           max-height: max(
-            120px,
-            calc(100dvh - 180px - env(safe-area-inset-bottom,0px))
+            100px,
+            calc(100dvh - 154px - env(safe-area-inset-bottom, 0px))
           ) !important;
-          padding: 16px !important;
+          padding: 12px !important;
+        }
+      }
+
+      @media(pointer:coarse) {
+        #${CONFIG.toolbarId} .xuc-panel button,
+        #${CONFIG.toolbarId} input[type="text"],
+        #${CONFIG.toolbarId} input[type="number"] {
+          min-height: 36px;
+        }
+
+        #${CONFIG.toolbarId} .xuc-keyword button {
+          min-height: 28px;
+          width: 28px;
         }
       }
 
@@ -794,31 +873,40 @@
           animation: none !important;
         }
       }
+
+      @supports not (
+        (backdrop-filter: blur(1px)) or
+        (-webkit-backdrop-filter: blur(1px))
+      ) {
+        #${CONFIG.toolbarId} .xuc-panel,
+        #${CONFIG.toolbarId} .xuc-toolbar-btn {
+          background: rgba(var(--glass-rgb), .96) !important;
+        }
+      }
     `;
 
-    if (typeof GM_addStyle === "function") {
-      const style = GM_addStyle(css);
-      if (style?.nodeType === Node.ELEMENT_NODE) {
-        style.id = CONFIG.styleId;
+    try {
+      if (typeof GM_addStyle === "function") {
+        const node = GM_addStyle(css);
+        if (node?.nodeType === Node.ELEMENT_NODE) {
+          node.id = CONFIG.styleId;
+        }
       } else {
-        // 部分管理器不返回 style 节点，使用标记避免重复注入。
-        const marker = document.createElement("meta");
-        marker.id = CONFIG.styleId;
-        (document.head || document.documentElement).appendChild(marker);
+        const style = document.createElement("style");
+        style.id = CONFIG.styleId;
+        style.textContent = css;
+        (document.head || document.documentElement).appendChild(style);
       }
-    } else {
-      const style = document.createElement("style");
-      style.id = CONFIG.styleId;
-      style.textContent = css;
-      (document.head || document.documentElement).appendChild(style);
+      stylesInjected = true;
+    } catch (error) {
+      console.warn("[X 界面增强] 注入样式失败:", error);
     }
   }
 
   function applyAppearance() {
-    if (!document.body) return;
-
     const body = document.body;
-    const rootStyle = document.documentElement.style;
+    if (!body) return;
+    appliedBody = body;
 
     body.classList.toggle("xuc-sidebar-visible", state.sidebarVisible);
     body.classList.toggle("xuc-themed", Boolean(state.theme));
@@ -831,23 +919,89 @@
       body.classList.toggle(`xuc-theme-${theme}`, state.theme === theme);
     }
 
-    rootStyle.setProperty("--xuc-tweet-width", `${state.tweetWidth}px`);
+    const style = document.documentElement.style;
+    style.setProperty("--xuc-tweet-width", `${state.tweetWidth}px`);
 
     if (state.fontSize) {
-      rootStyle.setProperty("--xuc-font-size", `${state.fontSize}px`);
+      style.setProperty("--xuc-font-size", `${state.fontSize}px`);
     } else {
-      rootStyle.removeProperty("--xuc-font-size");
+      style.removeProperty("--xuc-font-size");
     }
 
     if (state.lineHeight) {
-      rootStyle.setProperty("--xuc-line-height", String(state.lineHeight));
+      style.setProperty("--xuc-line-height", String(state.lineHeight));
     } else {
-      rootStyle.removeProperty("--xuc-line-height");
+      style.removeProperty("--xuc-line-height");
+    }
+
+    syncToolbarPalette();
+  }
+
+  function syncToolbarPalette() {
+    const toolbar = document.getElementById(CONFIG.toolbarId);
+    if (!toolbar) return;
+
+    let theme = state.theme;
+
+    if (!theme) {
+      const nodes = [
+        document.body,
+        document.documentElement,
+        document.querySelector('[data-testid="primaryColumn"]'),
+      ];
+
+      let rgb = null;
+
+      for (const node of nodes) {
+        if (!node) continue;
+
+        const color = getComputedStyle(node).backgroundColor;
+        const match = color.match(/^rgba?\(([^)]+)\)$/i);
+        if (!match) continue;
+
+        const values = match[1].match(/[\d.]+/g)?.map(Number);
+        if (!values || values.length < 3) continue;
+        if ((values[3] ?? 1) < 0.9) continue;
+
+        rgb = values.slice(0, 3);
+        break;
+      }
+
+      if (rgb) {
+        const palettes = {
+          light: [255, 255, 255],
+          dim: [21, 32, 43],
+          oled: [0, 0, 0],
+        };
+
+        let shortest = Infinity;
+        theme = "light";
+
+        for (const [name, color] of Object.entries(palettes)) {
+          const distance = color.reduce(
+            (sum, channel, index) => sum + (channel - rgb[index]) ** 2,
+            0
+          );
+
+          if (distance < shortest) {
+            shortest = distance;
+            theme = name;
+          }
+        }
+      } else {
+        theme = window.matchMedia("(prefers-color-scheme: dark)").matches
+          ? "oled"
+          : "light";
+      }
+    }
+
+    if (toolbar.dataset.nativeTheme !== theme) {
+      toolbar.dataset.nativeTheme = theme;
     }
   }
 
   function scheduleElevatedBars() {
-    if (!state.theme || themeTimer !== null) return;
+    if (!state.theme || themeTimer !== null || !started) return;
 
     themeTimer = window.setTimeout(() => {
       themeTimer = null;
@@ -872,7 +1026,7 @@
     }, 350);
   }
 
-  // ---------- 工具栏 ----------
+  // ==================== 工具栏 ====================
 
   const ICONS = {
     menu: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>',
@@ -881,41 +1035,32 @@
   };
 
   function buildToolbar() {
-    if (!document.body || document.getElementById(CONFIG.toolbarId)) {
-      return;
-    }
+    if (!document.body || document.getElementById(CONFIG.toolbarId)) return;
 
     const toolbar = document.createElement("div");
     toolbar.id = CONFIG.toolbarId;
 
-    // 这里只拼接固定模板，不插入用户输入。
+    // 固定模板，不将用户输入直接插入 HTML。
     toolbar.innerHTML = `
       <div class="xuc-toolbar-buttons" role="group" aria-label="X 界面增强">
-        <button type="button"
-          class="xuc-toolbar-btn xuc-sidebar-toggle"
+        <button type="button" class="xuc-toolbar-btn"
           data-action="sidebar"
           aria-label="显示或隐藏左侧导航"
-          title="显示或隐藏左侧导航">
-          ${ICONS.menu}
-        </button>
-        <button type="button"
-          class="xuc-toolbar-btn"
+          title="显示或隐藏左侧导航">${ICONS.menu}</button>
+
+        <button type="button" class="xuc-toolbar-btn"
           data-panel-toggle="search"
           aria-controls="xuc-search-panel"
           aria-expanded="false"
           aria-label="打开搜索"
-          title="搜索">
-          ${ICONS.search}
-        </button>
-        <button type="button"
-          class="xuc-toolbar-btn"
+          title="搜索">${ICONS.search}</button>
+
+        <button type="button" class="xuc-toolbar-btn"
           data-panel-toggle="layout"
           aria-controls="xuc-layout-panel"
           aria-expanded="false"
           aria-label="打开布局与阅读设置"
-          title="布局与阅读">
-          ${ICONS.layout}
-        </button>
+          title="布局与阅读">${ICONS.layout}</button>
       </div>
 
       <section id="xuc-search-panel" class="xuc-panel"
@@ -933,9 +1078,9 @@
         aria-labelledby="xuc-layout-title" hidden>
         <div id="xuc-layout-title" class="xuc-panel-title">布局与阅读</div>
 
-        <div class="xuc-label">主题</div>
+        <div class="xuc-label">页面主题 · 面板同步配色</div>
         <div class="xuc-grid xuc-themes">
-          <button type="button" data-theme="">默认</button>
+          <button type="button" data-theme="" title="跟随 X 页面">默认</button>
           <button type="button" data-theme="paper">米黄</button>
           <button type="button" data-theme="green">豆绿</button>
           <button type="button" data-theme="dim">Dim</button>
@@ -958,7 +1103,7 @@
           type="range" min="9" max="20" step="1"
           aria-label="正文行距，最左侧为网站默认">
 
-        <div class="xuc-grid" style="margin-top:12px">
+        <div class="xuc-grid xuc-top-gap">
           <button type="button" data-toggle="serifFont">衬线字体</button>
           <button type="button" data-toggle="focusMode">聚焦模式</button>
           <button type="button" data-toggle="dimRead">已浏览淡化</button>
@@ -966,21 +1111,21 @@
         </div>
 
         <div class="xuc-section">
-          <div class="xuc-head" style="margin-top:0">
+          <div class="xuc-head xuc-no-top">
             <span>自动滚动</span>
-            <button type="button"
-              data-toggle="autoScrollEnabled"
+            <button type="button" data-toggle="autoScrollEnabled"
               aria-label="自动滚动"></button>
           </div>
           <div class="xuc-row">
             <label for="xuc-seconds">每隔</label>
             <input id="xuc-seconds" data-field="autoScrollSeconds"
-              type="number" min="1" max="60" step="1">
+              type="number" min="1" max="60" step="1"
+              aria-label="自动滚动间隔，秒">
             <span>秒向下滚动</span>
           </div>
           <p id="xuc-auto-status" class="xuc-hint"></p>
           <p class="xuc-hint">
-            仅首页和用户主页。输入、弹窗、后台或手动上滚时暂停。
+            仅首页和用户主页；输入、弹窗、后台或上滚时暂停。
           </p>
         </div>
 
@@ -995,13 +1140,13 @@
         </div>
 
         <div class="xuc-section">
-          <div class="xuc-head" style="margin-top:0">
+          <div class="xuc-head xuc-no-top">
             <label for="xuc-width">推文宽度</label>
             <output id="xuc-width-value" for="xuc-width"></output>
           </div>
           <input id="xuc-width" data-field="tweetWidth"
             type="range" min="500" max="1400" step="50">
-          <div class="xuc-grid" style="margin-top:10px">
+          <div class="xuc-grid xuc-top-gap">
             <button type="button" data-width="600">窄</button>
             <button type="button" data-width="800">中</button>
             <button type="button" data-width="1000">宽</button>
@@ -1022,18 +1167,6 @@
     syncPanels();
   }
 
-  function setText(id, value) {
-    const node = document.getElementById(id);
-    if (node && node.textContent !== value) node.textContent = value;
-  }
-
-  function setInputValue(id, value) {
-    const input = document.getElementById(id);
-    if (input && input.value !== String(value)) {
-      input.value = String(value);
-    }
-  }
-
   function updateControls() {
     const toolbar = document.getElementById(CONFIG.toolbarId);
     if (!toolbar) return;
@@ -1044,7 +1177,8 @@
       button.setAttribute("aria-pressed", String(enabled));
 
       if (button.dataset.toggle === "autoScrollEnabled") {
-        button.textContent = enabled ? "开启" : "关闭";
+        const text = enabled ? "开启" : "关闭";
+        if (button.textContent !== text) button.textContent = text;
       }
     });
 
@@ -1072,6 +1206,7 @@
     setText("xuc-font-value", fontText);
     setText("xuc-line-value", lineText);
     setText("xuc-width-value", `${state.tweetWidth}px`);
+    setText("xuc-auto-status", autoStatus);
 
     setInputValue("xuc-font", state.fontSize || 9);
     setInputValue("xuc-line", state.lineHeight
@@ -1079,7 +1214,6 @@
       : 9);
     setInputValue("xuc-width", state.tweetWidth);
 
-    // 不覆盖用户正在编辑的数字输入。
     if (document.activeElement?.id !== "xuc-seconds") {
       setInputValue("xuc-seconds", state.autoScrollSeconds);
     }
@@ -1089,7 +1223,7 @@
     toolbar.querySelector("#xuc-line")
       .setAttribute("aria-valuetext", lineText);
 
-    updateAutoStatusText();
+    syncToolbarPalette();
   }
 
   function syncPanels() {
@@ -1116,15 +1250,19 @@
     if (restoreFocus && previous) {
       document.querySelector(
         `#${CONFIG.toolbarId} [data-panel-toggle="${previous}"]`
-      )?.focus();
+      )?.focus({ preventScroll: true });
     }
   }
 
   function togglePanel(name) {
-    state.openPanel = state.openPanel === name ? "" : name;
-    syncPanels();
+    if (state.openPanel === name) {
+      closePanel(true);
+      return;
+    }
 
-    if (!state.openPanel) return;
+    state.openPanel = name;
+    syncToolbarPalette();
+    syncPanels();
 
     const target = name === "search"
       ? document.getElementById("xuc-search-input")
@@ -1139,7 +1277,7 @@
 
     const fragment = document.createDocumentFragment();
 
-    state.blockedKeywords.forEach(keyword => {
+    for (const keyword of state.blockedKeywords) {
       const tag = document.createElement("span");
       tag.className = "xuc-keyword";
 
@@ -1154,7 +1292,7 @@
 
       tag.append(text, remove);
       fragment.appendChild(tag);
-    });
+    }
 
     list.replaceChildren(fragment);
   }
@@ -1162,10 +1300,11 @@
   function changeKeywords(keywords) {
     state.blockedKeywords = normalizeKeywords(keywords);
     lowerKeywords = state.blockedKeywords.map(s => s.toLowerCase());
-    keywordVersion += 1;
+    keywordVersion++;
 
     queueSave("blockedKeywords");
     renderKeywords();
+    readCandidates.clear();
     markAllTweets();
   }
 
@@ -1181,13 +1320,14 @@
 
     changeKeywords([...state.blockedKeywords, value]);
     input.value = "";
-    input.focus();
+    input.focus({ preventScroll: true });
   }
 
   function runSearch() {
-    const query = document.getElementById("xuc-search-input")
-      ?.value.trim();
+    const query = document.getElementById("xuc-search-input")?.value.trim();
     if (!query) return;
+
+    flushSaves();
 
     const url = new URL("/search", window.location.origin);
     url.searchParams.set("q", query);
@@ -1229,8 +1369,7 @@
 
   function handleToolbarClick(event) {
     event.stopPropagation();
-
-    const button = event.target.closest("button");
+    const button = asElement(event.target)?.closest("button");
     if (!button) return;
 
     if (button.hasAttribute("data-panel-toggle")) {
@@ -1263,6 +1402,7 @@
 
   function handleToolbarInput(event) {
     const input = event.target;
+
     switch (input.dataset.field) {
       case "tweetWidth":
         changeSetting("tweetWidth", clampWidth(input.value));
@@ -1295,34 +1435,31 @@
   }
 
   function handleToolbarKeydown(event) {
-    // 避免输入法确认候选时执行搜索或添加关键词。
     if (event.isComposing || event.keyCode === 229) return;
+
+    // 防止 X 的页面快捷键干扰面板输入。
+    event.stopPropagation();
 
     if (event.key === "Escape") {
       event.preventDefault();
-      event.stopPropagation();
       closePanel(true);
-      return;
-    }
-
-    if (event.key !== "Enter") return;
-
-    if (event.target.id === "xuc-search-input") {
-      event.preventDefault();
-      runSearch();
-    } else if (event.target.id === "xuc-keyword-input") {
-      event.preventDefault();
-      addKeyword();
+    } else if (event.key === "Enter") {
+      if (event.target.id === "xuc-search-input") {
+        event.preventDefault();
+        runSearch();
+      } else if (event.target.id === "xuc-keyword-input") {
+        event.preventDefault();
+        addKeyword();
+      }
     }
   }
 
-  // ---------- 关键词过滤、自动展开 ----------
+  // ==================== 关键词与自动展开 ====================
 
   function applyTweetFilter(article, id) {
     if (!lowerKeywords.length) {
-      if (hiddenTweets.delete(article)) {
-        article.classList.remove("xuc-keyword-hidden");
-      }
+      hiddenTweets.delete(article);
+      article.classList.remove("xuc-keyword-hidden");
       tweetCache.delete(article);
       return;
     }
@@ -1334,9 +1471,7 @@
       previous?.id === id &&
       previous.text === text &&
       previous.version === keywordVersion
-    ) {
-      return;
-    }
+    ) return;
 
     const matched = lowerKeywords.some(keyword => text.includes(keyword));
     article.classList.toggle("xuc-keyword-hidden", matched);
@@ -1344,11 +1479,7 @@
     if (matched) hiddenTweets.add(article);
     else hiddenTweets.delete(article);
 
-    tweetCache.set(article, {
-      id,
-      text,
-      version: keywordVersion,
-    });
+    tweetCache.set(article, { id, text, version: keywordVersion });
   }
 
   function autoExpandTweet(article, id) {
@@ -1364,18 +1495,15 @@
 
     if (!button || expandedButtons.has(button)) return;
 
-    // 不点击具有实际导航目标的链接。
-    const anchor = button.closest("a");
-    const href = anchor?.getAttribute("href");
+    const href = button.closest("a")?.getAttribute("href");
     if (href && href !== "#") return;
-    if (button.getAttribute("aria-disabled") === "true") return;
-    if (button.disabled) return;
+    if (button.getAttribute("aria-disabled") === "true" || button.disabled) {
+      return;
+    }
 
     expandedButtons.add(button);
     expansionAttempts.set(article, { id, count: count + 1 });
     button.click();
-
-    // 正文更新由 MutationObserver 再次触发过滤。
   }
 
   function processTweet(article) {
@@ -1408,9 +1536,7 @@
     if (node?.nodeType !== Node.ELEMENT_NODE || isOwned(node)) return;
 
     if (node.matches(TWEET)) dirtyTweets.add(node);
-    node.querySelectorAll(TWEET).forEach(article => {
-      dirtyTweets.add(article);
-    });
+    node.querySelectorAll(TWEET).forEach(article => dirtyTweets.add(article));
   }
 
   function markAllTweets() {
@@ -1420,7 +1546,55 @@
     scheduleMutationFlush();
   }
 
-  // ---------- 已浏览淡化 ----------
+  // ==================== 已浏览淡化 ====================
+
+  function getTimelineKey() {
+    const url = new URL(window.location.href);
+    const path = url.pathname.replace(/\/+$/, "") || "/";
+
+    for (const key of ["src", "s", "t", "ref_src", "ref_url"]) {
+      url.searchParams.delete(key);
+    }
+    url.searchParams.sort();
+
+    const tab = document.querySelector(
+      '[data-testid="primaryColumn"] [role="tab"][aria-selected="true"]'
+    );
+
+    const tabKey = tab
+      ? `${tab.getAttribute("href") || ""}|${tab.textContent?.trim() || ""}`
+      : "";
+
+    return `${path}?${url.searchParams.toString()}#${tabKey}`;
+  }
+
+  function selectReadTimeline() {
+    if (isDetailPage()) return false;
+
+    const key = getTimelineKey();
+    if (key === activeTimelineKey) return false;
+
+    const ids = readTimelines.get(key) || new Set();
+    readTimelines.delete(key);
+    readTimelines.set(key, ids);
+
+    while (readTimelines.size > CONFIG.maxReadTimelines) {
+      readTimelines.delete(readTimelines.keys().next().value);
+    }
+
+    activeTimelineKey = key;
+    activeReadIds = ids;
+    return true;
+  }
+
+  function rememberRead(id) {
+    if (!id || activeReadIds.has(id)) return;
+
+    activeReadIds.add(id);
+    while (activeReadIds.size > CONFIG.maxReadIds) {
+      activeReadIds.delete(activeReadIds.values().next().value);
+    }
+  }
 
   function readEnabledHere() {
     return state.dimRead && !isDetailPage() && !document.hidden;
@@ -1434,12 +1608,10 @@
       node && node !== document.body && node !== document.documentElement;
       node = node.parentElement
     ) {
-      const style = getComputedStyle(node);
-      if (/(auto|scroll|hidden|clip)/.test(style.overflowY)) {
+      if (/(auto|scroll|hidden|clip)/.test(getComputedStyle(node).overflowY)) {
         result.push(node);
       }
     }
-
     return result;
   }
 
@@ -1481,11 +1653,6 @@
 
     window.clearTimeout(readTimer);
     readTimer = null;
-
-    if (readFrame !== null) {
-      window.cancelAnimationFrame(readFrame);
-      readFrame = null;
-    }
 
     readObserved.clear();
     readCandidates.clear();
@@ -1536,12 +1703,10 @@
 
     readObserver.unobserve(article);
     readCandidates.delete(article);
-
     readObserved.set(article, {
       id,
       parents: getScrollParents(article),
     });
-
     readObserver.observe(article);
   }
 
@@ -1562,19 +1727,21 @@
         continue;
       }
 
-      if (entry.isIntersecting && entry.intersectionRect.height > 0) {
-        if (!readCandidates.has(article)) {
-          readCandidates.set(article, {
-            ...info,
-            since: now,
-            startOffset: getScrollOffset(info.parents),
-            lastOffset: getScrollOffset(info.parents),
-          });
-        }
+      if (
+        entry.isIntersecting &&
+        entry.intersectionRect.height > 0 &&
+        !readCandidates.has(article)
+      ) {
+        const offset = getScrollOffset(info.parents);
+        readCandidates.set(article, {
+          ...info,
+          since: now,
+          startOffset: offset,
+          lastOffset: offset,
+        });
       }
     }
 
-    // 同时处理刚刚从上方离开视口的候选。
     scanReadCandidates();
   }
 
@@ -1582,16 +1749,12 @@
     if (
       !readEnabledHere() ||
       !readCandidates.size ||
-      readTimer !== null ||
-      readFrame !== null
+      readTimer !== null
     ) return;
 
     readTimer = window.setTimeout(() => {
       readTimer = null;
-      readFrame = window.requestAnimationFrame(() => {
-        readFrame = null;
-        scanReadCandidates();
-      });
+      scanReadCandidates();
     }, CONFIG.readScanInterval);
   }
 
@@ -1602,7 +1765,6 @@
     const toMark = [];
     const toRemove = [];
 
-    // 先读取几何信息，最后统一修改 class。
     for (const [article, candidate] of readCandidates) {
       if (
         !article.isConnected ||
@@ -1622,20 +1784,16 @@
       const oldEnough = now - candidate.since >= CONFIG.readMinVisibleMs;
 
       const hasArea = (
-        rect.width > 0 &&
-        rect.height > 0 &&
+        rect.width > 0 && rect.height > 0 &&
         bounds.bottom > bounds.top &&
         bounds.right > bounds.left
       );
 
       const above = hasArea && rect.bottom <= bounds.top + 1;
-
       const visible = (
         hasArea &&
-        rect.bottom > bounds.top &&
-        rect.top < bounds.bottom &&
-        rect.right > bounds.left &&
-        rect.left < bounds.right
+        rect.bottom > bounds.top && rect.top < bounds.bottom &&
+        rect.right > bounds.left && rect.left < bounds.right
       );
 
       if (above && movedDown && movedSinceEntry && oldEnough) {
@@ -1648,10 +1806,9 @@
       }
     }
 
-    for (const article of toRemove) {
-      readCandidates.delete(article);
-    }
+    for (const article of toRemove) readCandidates.delete(article);
 
+    // 批量读取完成后再修改外观。
     for (const [article, id] of toMark) {
       rememberRead(id);
       article.classList.add("xuc-read");
@@ -1663,7 +1820,6 @@
   function refreshReadGeometry() {
     if (!state.dimRead || !readObserver) return;
 
-    // 布局变化不作为“读完”，清空候选并重新进入观察。
     readCandidates.clear();
 
     for (const [article, info] of readObserved) {
@@ -1675,7 +1831,7 @@
     }
   }
 
-  // ---------- 自动滚动 ----------
+  // ==================== 自动滚动 ====================
 
   function canAutoScrollHere() {
     const path = window.location.pathname.replace(/\/+$/, "") || "/";
@@ -1683,9 +1839,8 @@
     if (isDetailPage()) return false;
 
     const parts = path.split("/").filter(Boolean);
-    if (parts.length !== 1) return false;
-
     return (
+      parts.length === 1 &&
       /^[A-Za-z0-9_]{1,15}$/.test(parts[0]) &&
       !RESERVED_PATHS.has(parts[0].toLowerCase())
     );
@@ -1698,7 +1853,7 @@
 
   function getAutoPauseReason() {
     if (document.hidden) return "后台暂停";
-    if (state.openPanel) return "设置面板打开，已暂停";
+    if (state.openPanel) return "面板打开，已暂停";
     if (document.fullscreenElement) return "全屏期间暂停";
 
     const active = document.activeElement;
@@ -1719,14 +1874,10 @@
     return "";
   }
 
-  function updateAutoStatusText() {
-    setText("xuc-auto-status", autoStatus || "已关闭");
-  }
-
   function setAutoStatus(text) {
     if (autoStatus === text) return;
     autoStatus = text;
-    updateAutoStatusText();
+    setText("xuc-auto-status", text);
   }
 
   function stopAutoTimer() {
@@ -1767,7 +1918,6 @@
   function autoScrollTick() {
     if (!started || !state.autoScrollEnabled) return;
 
-    // 不依赖沙箱中的 history 包装，执行前再次确认地址。
     if (currentUrl !== window.location.href) {
       checkRoute();
       return;
@@ -1778,10 +1928,10 @@
       return;
     }
 
-    const pauseReason = getAutoPauseReason();
-    if (pauseReason) {
+    const reason = getAutoPauseReason();
+    if (reason) {
       bottomChecks = 0;
-      setAutoStatus(pauseReason);
+      setAutoStatus(reason);
       scheduleAutoTick();
       return;
     }
@@ -1794,7 +1944,6 @@
       bottomChecks = height > lastDocumentHeight + 4
         ? 1
         : bottomChecks + 1;
-
       lastDocumentHeight = height;
 
       if (bottomChecks >= CONFIG.bottomConfirmations) {
@@ -1803,7 +1952,6 @@
           "底部暂未加载新内容，自动滚动已暂停",
           "success"
         );
-        // 保留用户偏好，但不因后续 DOM 更新自动重启。
         return;
       }
 
@@ -1826,13 +1974,15 @@
     scheduleAutoTick();
   }
 
-  // ---------- DOM 增量监听 ----------
+  // ==================== DOM 增量监听 ====================
 
   function scheduleMutationFlush() {
     if (!started || mutationTimer !== null) return;
 
-    // 固定窗口合并，而非持续 debounce，避免动态时间线饿死任务。
-    mutationTimer = window.setTimeout(flushMutations, CONFIG.mutationDelay);
+    mutationTimer = window.setTimeout(
+      flushMutations,
+      CONFIG.mutationDelay
+    );
   }
 
   function handleMutations(records) {
@@ -1841,10 +1991,7 @@
     for (const record of records) {
       if (isOwned(record.target)) continue;
 
-      const target = record.target.nodeType === Node.ELEMENT_NODE
-        ? record.target
-        : record.target.parentElement;
-
+      const target = asElement(record.target);
       if (!target) continue;
 
       const article = target.closest(TWEET);
@@ -1869,8 +2016,17 @@
         relevant = true;
       }
 
-      // 包括主列整体删除和工具栏意外丢失。
-      if (record.removedNodes.length) relevant = true;
+      for (const node of record.removedNodes) {
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+
+        if (
+          !isOwned(node) ||
+          node.id === CONFIG.toolbarId ||
+          node.querySelector?.(`#${CONFIG.toolbarId}`)
+        ) {
+          relevant = true;
+        }
+      }
     }
 
     if (relevant) scheduleMutationFlush();
@@ -1881,7 +2037,6 @@
     if (!started || !document.body) return;
 
     checkRoute();
-    buildToolbar();
 
     for (const article of trackedTweets) {
       if (!article.isConnected || !article.matches(TWEET)) {
@@ -1889,8 +2044,7 @@
       }
     }
 
-    const timelineChanged = selectReadTimeline();
-    if (timelineChanged) {
+    if (selectReadTimeline()) {
       resetReadTracking();
       syncReadMode();
     }
@@ -1898,20 +2052,16 @@
     const pending = [...dirtyTweets];
     dirtyTweets.clear();
 
-    for (const article of pending) {
-      processTweet(article);
-    }
+    for (const article of pending) processTweet(article);
 
     scheduleElevatedBars();
   }
 
   function startDomObserver() {
     domObserver?.disconnect();
-
     domObserver = new MutationObserver(handleMutations);
 
-    // 使用稳定的 documentElement，避免 SPA 替换主列后失联。
-    // 不观察 class/style，脚本自身外观更新不会反复触发。
+    // 监听稳定根节点；不观察 class/style，避免自身样式更新循环。
     domObserver.observe(document.documentElement, {
       subtree: true,
       childList: true,
@@ -1921,15 +2071,15 @@
     });
   }
 
-  // ---------- 路由、生命周期 ----------
+  // ==================== 路由与生命周期 ====================
 
   function checkRoute() {
-    if (!started) return;
+    if (!started || !document.body) return;
 
-    const url = window.location.href;
+    if (appliedBody !== document.body) applyAppearance();
 
-    if (url !== currentUrl) {
-      currentUrl = url;
+    if (currentUrl !== window.location.href) {
+      currentUrl = window.location.href;
       closePanel(false);
       manualPauseUntil = 0;
       lastWindowScrollY = window.scrollY;
@@ -1937,22 +2087,21 @@
       resetReadTracking();
       selectReadTimeline();
       syncReadMode();
-
       markAllTweets();
       restartAutoScroll();
       scheduleElevatedBars();
     }
 
-    if (!document.getElementById(CONFIG.toolbarId) && document.body) {
+    if (!document.getElementById(CONFIG.toolbarId)) {
       buildToolbar();
-      applyAppearance();
     }
+
+    syncToolbarPalette();
   }
 
   function handleScroll(event) {
     const y = window.scrollY;
 
-    // 只把窗口向上滚动作为自动滚动暂停信号。
     if (
       event.target === document ||
       event.target === document.documentElement ||
@@ -1971,11 +2120,24 @@
     scheduleReadScan();
   }
 
+  function handleWheel(event) {
+    if (
+      event.deltaY < 0 &&
+      !isOwned(event.target) &&
+      state.autoScrollEnabled &&
+      canAutoScrollHere()
+    ) {
+      manualPauseUntil = Date.now() + CONFIG.manualScrollPauseMs;
+    }
+  }
+
   function handleVisibilityChange() {
     readCandidates.clear();
 
-    if (!document.hidden) {
-      // 重新 observe，让已经处于视口中的节点重新生成候选。
+    if (document.hidden) {
+      flushSaves();
+    } else {
+      checkRoute();
       refreshReadGeometry();
     }
   }
@@ -1985,8 +2147,18 @@
   }
 
   function handleOutsideClick(event) {
-    if (state.openPanel && !isOwned(event.target)) {
-      closePanel(false);
+    if (state.openPanel && !isOwned(event.target)) closePanel(false);
+  }
+
+  function handleEscape(event) {
+    if (
+      event.key === "Escape" &&
+      !event.isComposing &&
+      state.openPanel
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      closePanel(true);
     }
   }
 
@@ -2017,8 +2189,10 @@
       capture: true,
       passive: true,
     });
+    document.addEventListener("wheel", handleWheel, { passive: true });
     document.addEventListener("visibilitychange", handleVisibilityChange);
     document.addEventListener("click", handleOutsideClick);
+    document.addEventListener("keydown", handleEscape, true);
     window.addEventListener("resize", handleResize, { passive: true });
     window.addEventListener("popstate", checkRoute);
     window.addEventListener("hashchange", checkRoute);
@@ -2045,8 +2219,10 @@
     dirtyTweets.clear();
 
     document.removeEventListener("scroll", handleScroll, true);
+    document.removeEventListener("wheel", handleWheel);
     document.removeEventListener("visibilitychange", handleVisibilityChange);
     document.removeEventListener("click", handleOutsideClick);
+    document.removeEventListener("keydown", handleEscape, true);
     window.removeEventListener("resize", handleResize);
     window.removeEventListener("popstate", checkRoute);
     window.removeEventListener("hashchange", checkRoute);
@@ -2061,3 +2237,4 @@
     start();
   }
 })();
+```
