@@ -1,6 +1,4 @@
-保存为 `x-interface-enhancer.user.js`，或直接完整复制到 Tampermonkey 中替换旧脚本。已合并紧凑布局、毛玻璃效果和跟随 X 页面配色的面板。
-
-```javascript
+javascript
 // ==UserScript==
 // @name         X 界面增强工具
 // @namespace    https://example.local/
@@ -2237,4 +2235,3 @@
     start();
   }
 })();
-```
