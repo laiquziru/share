@@ -1,4 +1,3 @@
-javascript
 // ==UserScript==
 // @name         X 界面增强工具
 // @namespace    https://example.local/
