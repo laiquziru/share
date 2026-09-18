@@ -248,11 +248,12 @@ function main(config) {
     // ============================================================
     // Telegram → DIRECT
     //
-    // 只用 GEOSITE：geoip 库中没有 telegram 这个类别，
-    // 写 GEOIP,TELEGRAM 是空规则（永远匹配 0 条）。
+    // GEOSITE 管域名，GEOIP 管裸 IP 直连（Telegram 客户端
+    // 大量走 IP 而不是域名）。
     // ============================================================
 
     "GEOSITE,telegram,DIRECT",
+    "GEOIP,TELEGRAM,DIRECT,no-resolve",
 
     // ============================================================
     // 广告拦截
