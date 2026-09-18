@@ -137,7 +137,7 @@ dns!:
     geoip-code: CN
     geosite:
       - gfw
-      - category-ai
+      - geolocation-!cn
       - geolocation-!cn
 
   nameserver-policy:
@@ -147,7 +147,7 @@ dns!:
     "rule-set:domestic_sensitive,domestic_ai_domain,tencent_services,tencent_games_static":
       - https://doh.pub/dns-query
       - https://dns.alidns.com/dns-query
-    "rule-set:ai_static,ai_domain,telegram_domain,youtube_domain,academic_platforms,google_proxy_static,google_domain,github_domain,streaming_static,netflix_domain,disney_domain,hbo_domain,hulu_domain,primevideo_domain,spotify_domain,tiktok_domain,apple_tv_domain,discoveryplus_domain,bahamut_domain,biliintl_domain,geolocation_not_cn,overseas_ai_extra":
+    "rule-set:ai_domain,geolocation_not_cn":
       - https://cloudflare-dns.com/dns-query
       - https://dns.google/dns-query
 
@@ -896,7 +896,7 @@ rules:
   - "GEOSITE,cn,DIRECT"
   - "GEOIP,CN,DIRECT,no-resolve"
   - "RULE-SET,ads_domain,REJECT"
-  - "GEOSITE,category-ai,PROXY"
+  - "RULE-SET,ai_domain,PROXY"
   - "GEOSITE,youtube,PROXY"
   - "RULE-SET,x_twitter,PROXY"
   - "GEOSITE,google,PROXY"

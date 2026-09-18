@@ -115,14 +115,14 @@ function main(config) {
     "fallback-filter": {
       geoip: true,
       "geoip-code": "CN",
-      geosite: ["gfw", "category-ai", "geolocation-!cn"]
+      geosite: ["gfw", "geolocation-!cn"]
     },
     "nameserver-policy": {
       "geosite:private,cn,apple-cn": [
         "https://doh.pub/dns-query",
         "https://dns.alidns.com/dns-query"
       ],
-      "geosite:category-ai,geolocation-!cn,youtube,google": [
+      "rule-set:ai_domain,geolocation-!cn,youtube,google": [
         "https://cloudflare-dns.com/dns-query",
         "https://dns.google/dns-query"
       ]
@@ -146,7 +146,7 @@ function main(config) {
     "GEOSITE,cn,DIRECT",
     "GEOIP,CN,DIRECT,no-resolve",
     "RULE-SET,AdvertisingLite,REJECT",
-    "GEOSITE,category-ai,PROXY",
+    "RULE-SET,ai_domain,PROXY",
     "GEOSITE,youtube,PROXY",
     "RULE-SET,x_twitter,PROXY",
     "GEOSITE,google,PROXY",
@@ -259,10 +259,19 @@ function main(config) {
       "DOMAIN-SUFFIX,twimg.com"
     ]
   };
+  fixed["rule-providers"]["ai_domain"] = {
+    type: "http",
+    behavior: "domain",
+    format: "mrs",
+    interval: 86400,
+    url: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/category-ai-!cn.mrs"
+  };
 
   // All project-owned MRS resources follow one configurable repository.
   Object.values(fixed["rule-providers"]).forEach(provider => {
-    provider.url = provider.url.replace("Sydney-Moses/Network-Profiles", RUNESTONE.repository);
+    if (provider && typeof provider.url === "string") {
+      provider.url = provider.url.replace("Sydney-Moses/Network-Profiles", RUNESTONE.repository);
+    }
   });
   fixed.rules = [...new Set(fixed.rules)];
   const groups = fixed["proxy-groups"];
