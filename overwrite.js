@@ -397,5 +397,3 @@ function main(config) {
 
   return fixed;
 }
-
-module.exports = {main, RUNESTONE};
