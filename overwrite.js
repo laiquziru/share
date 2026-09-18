@@ -233,7 +233,7 @@ function main(config) {
   const AI = usPool ? autoByKey.US : "PROXY";
 
   fixed.rules = [
-    // 局域网直连
+    // 局域网直连（GEOIP 类别名必须大写）
     "GEOIP,LAN,DIRECT,no-resolve",
     "GEOIP,PRIVATE,DIRECT,no-resolve",
 
@@ -247,10 +247,12 @@ function main(config) {
 
     // ============================================================
     // Telegram → DIRECT
+    //
+    // 只用 GEOSITE：geoip 库中没有 telegram 这个类别，
+    // 写 GEOIP,TELEGRAM 是空规则（永远匹配 0 条）。
     // ============================================================
 
     "GEOSITE,telegram,DIRECT",
-    "GEOIP,telegram,DIRECT,no-resolve",
 
     // ============================================================
     // 广告拦截
@@ -260,6 +262,8 @@ function main(config) {
 
     // ============================================================
     // 中国大陆直连
+    //
+    // GEOIP 的类别名必须大写（CN / LAN / PRIVATE）。
     // ============================================================
 
     "GEOSITE,CN,DIRECT",
