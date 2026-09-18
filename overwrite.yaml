@@ -129,6 +129,17 @@ dns!:
     - https://dns.alidns.com/dns-query
 
   # 国内域名走国内 DNS；明确代理域名走海外 DoH，并由规则送进代理。
+  fallback:
+    - https://cloudflare-dns.com/dns-query
+    - https://dns.google/dns-query
+  fallback-filter:
+    geoip: true
+    geoip-code: CN
+    geosite:
+      - gfw
+      - category-ai
+      - geolocation-!cn
+
   nameserver-policy:
     "geosite:private,cn,apple-cn,microsoft@cn,steam@cn,category-games@cn":
       - https://doh.pub/dns-query
@@ -161,106 +172,52 @@ geo-update-interval: 24
 # 空家宽组拒绝连接；没有家宽节点时，在 AI 组手动选择"节点选择"。
 # ============================================================
 proxy-groups:
-  # 总开关：默认使用 AUTO，也可手动切换到 US / JP / SG / 其他节点。
   - name: "PROXY"
     type: select
-    icon: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Final.png"
+    include-all: true
+    exclude-filter: "(?i)官网|流量|剩余|到期|套餐|订阅|expire|traffic"
     proxies:
       - "AUTO"
       - "US"
       - "JP"
       - "SG"
-      - "其他节点"
-      - DIRECT
+    icon: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Final.png"
 
-  # 跨地区自动测速，覆盖美国、日本、新加坡及未识别地区节点。
   - name: "AUTO"
     type: url-test
     include-all: true
     exclude-filter: "(?i)官网|流量|剩余|到期|套餐|订阅|expire|traffic"
-    icon: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Auto.png"
     url: "http://www.gstatic.com/generate_204"
     interval: 900
     tolerance: 50
+    icon: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Auto.png"
 
   - name: "US"
     type: url-test
     include-all: true
     filter: "(?i)([\\[]US[\\]]|^US$|USA|United[ _-]?States|\\bUS\\b|美国|美國|🇺🇸)"
-    icon: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/United_States.png"
     url: "http://www.gstatic.com/generate_204"
     interval: 900
     tolerance: 50
+    icon: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/United_States.png"
 
   - name: "JP"
     type: url-test
     include-all: true
     filter: "(?i)([\\[]JP[\\]]|^JP$|Japan|\\bJP\\b|日本|东京|大阪|🇯🇵)"
-    icon: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Japan.png"
     url: "http://www.gstatic.com/generate_204"
     interval: 900
     tolerance: 50
+    icon: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Japan.png"
 
   - name: "SG"
     type: url-test
     include-all: true
     filter: "(?i)([\\[]SG[\\]]|^SG$|Singapore|\\bSG\\b|新加坡|狮城|🇸🇬)"
-    icon: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Singapore.png"
     url: "http://www.gstatic.com/generate_204"
     interval: 900
     tolerance: 50
-
-  - name: "其他节点"
-    type: select
-    include-all: true
-    exclude-filter: "(?i)官网|流量|剩余|到期|套餐|订阅|expire|traffic|([\\[]US[\\]]|USA|United[ _-]?States|美国|美國|🇺🇸|[\\[]JP[\\]]|Japan|日本|🇯🇵|[\\[]SG[\\]]|Singapore|新加坡|🇸🇬)"
-    icon: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Server.png"
-    empty-fallback: REJECT
-
-  - name: "🤖 AI 平台"
-    type: select
-    icon: "https://fastly.jsdelivr.net/gh/shindgewongxj/WHATSINStash/icon/openai.png"
-    proxies:
-      - "US"
-      - "AUTO"
-      - "JP"
-      - "SG"
-      - "其他节点"
-      - "PROXY"
-      - DIRECT
-
-  - name: "📲 电报消息"
-    type: select
-    proxies: ["AUTO", "US", "JP", "SG", "其他节点", "PROXY", DIRECT]
-
-  - name: "📹 油管视频"
-    type: select
-    icon: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/YouTube.png"
-    proxies: ["AUTO", "US", "JP", "SG", "其他节点", "PROXY", DIRECT]
-
-  - name: "🎬 流媒体解锁"
-    type: select
-    proxies: ["AUTO", "US", "JP", "SG", "其他节点", "PROXY", DIRECT]
-
-  - name: "Ⓜ️ 微软服务"
-    type: select
-    proxies: [DIRECT, "AUTO", "US", "JP", "SG", "其他节点", "PROXY"]
-
-  - name: "🍎 苹果服务"
-    type: select
-    proxies: [DIRECT, "AUTO", "US", "JP", "SG", "其他节点", "PROXY"]
-
-  - name: "🛑 广告拦截"
-    type: select
-    proxies: [REJECT, DIRECT]
-
-  - name: "🎯 全球直连"
-    type: select
-    proxies: [DIRECT, "PROXY"]
-
-  - name: "🐟 漏网之鱼"
-    type: select
-    proxies: ["AUTO", "PROXY", DIRECT]
+    icon: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Singapore.png"
 
 # ============================================================
 # 规则集
@@ -587,7 +544,7 @@ rule-providers!:
       - "DOMAIN-SUFFIX,udio.com"
 
   # 海外 AI 补充域名：ai_static / ai_domain 未覆盖或近期新增的服务。
-  # 海外 AI 统一走 🤖 AI 平台，策略组首选 US，失败时可切换 AUTO / JP / SG。
+  # 海外 AI 统一走 US，策略组首选 US，失败时可切换 AUTO / JP / SG。
   overseas_ai_extra:
     type: inline
     behavior: classical
@@ -904,6 +861,15 @@ rule-providers!:
       - "DOMAIN-SUFFIX,ossweb-img.qq.com"
       - "DOMAIN-SUFFIX,tplay.qq.com"
 
+  x_twitter:
+    type: inline
+    behavior: classical
+    payload:
+      - "DOMAIN-SUFFIX,x.com"
+      - "DOMAIN-SUFFIX,twitter.com"
+      - "DOMAIN-SUFFIX,t.co"
+      - "DOMAIN-SUFFIX,twimg.com"
+
   ads_domain:
     type: http
     behavior: domain
@@ -925,96 +891,14 @@ rule-providers!:
 # 已移除与 RULE-SET 同源的 GEOSITE/GEOIP 重复行。
 # ============================================================
 rules:
-  # 内网 / 局域网直连
-  - "RULE-SET,private_domain,🎯 全球直连"
-  - "RULE-SET,private_ip,🎯 全球直连,no-resolve"
-  - "DOMAIN-SUFFIX,msftconnecttest.com,🎯 全球直连"
-  - "DOMAIN-SUFFIX,msftncsi.com,🎯 全球直连"
-
-  # DoH / DNS 泄露检测域名必须走代理，避免测试和海外 DNS 查询走直连。
-  - "DOMAIN-SUFFIX,cloudflare-dns.com,PROXY"
-  - "DOMAIN-SUFFIX,dns.cloudflare.com,PROXY"
-  - "DOMAIN-SUFFIX,dns.google,PROXY"
-  - "DOMAIN-SUFFIX,one.one.one.one,PROXY"
-  - "DOMAIN-SUFFIX,dns.quad9.net,PROXY"
-  - "DOMAIN-SUFFIX,doh.opendns.com,PROXY"
-  - "DOMAIN-SUFFIX,ipleak.net,PROXY"
-  - "DOMAIN-SUFFIX,browserleaks.com,PROXY"
-  - "DOMAIN-SUFFIX,dnsleaktest.com,PROXY"
-  - "DOMAIN-SUFFIX,dnsleak.com,PROXY"
-  - "RULE-SET,prevent_dns_leak,PROXY"
-
-  # 国内支付 / 银行 / 政务 / 中国 AI 服务优先直连，避免风控和绕路。
-  - "RULE-SET,domestic_sensitive,🎯 全球直连"
-  - "RULE-SET,domestic_ai_domain,🎯 全球直连"
-
-  # 腾讯 / 微信 / 中国网游优先直连；位于广告规则前，避免安全检测、TQOS、诊断域名被误拦截。
-  # 腾讯系 UDP 直连 IP 的流量无域名可匹配，最终由下方 cn_ip / GEOIP 中国规则覆盖，无需进程名规则。
-  - "RULE-SET,tencent_services,🎯 全球直连"
-  - "RULE-SET,tencent_games_static,🎯 全球直连"
-
-  # 广告
-  - "RULE-SET,ads_domain,🛑 广告拦截"
-  # 遥测 / 监控上报，放在国内直连保护与广告之后。
-  - "RULE-SET,telemetry_domain,🛑 广告拦截"
-
-  # AI / 通讯 / 视频 / 开发服务：默认走代理
-  - "RULE-SET,ai_static,🤖 AI 平台"
-  - "RULE-SET,ai_domain,🤖 AI 平台"
-  - "DOMAIN-SUFFIX,ai.com,🤖 AI 平台"
-  # 海外 AI 补充域名：内地走 🤖 AI 平台，默认家宽出口。
-  - "RULE-SET,overseas_ai_extra,🤖 AI 平台"
-  - "RULE-SET,telegram_domain,📲 电报消息"
-  - "RULE-SET,telegram_ip,📲 电报消息,no-resolve"
-  - "RULE-SET,youtube_domain,📹 油管视频"
-  - "DOMAIN-SUFFIX,x.com,PROXY"
-  - "DOMAIN-SUFFIX,twitter.com,PROXY"
-  - "DOMAIN-SUFFIX,t.co,PROXY"
-  - "DOMAIN-SUFFIX,twimg.com,PROXY"
-
-  # 流媒体解锁：单节点下统一走代理出口。
-  - "RULE-SET,streaming_static,🎬 流媒体解锁"
-  - "RULE-SET,netflix_domain,🎬 流媒体解锁"
-  - "RULE-SET,disney_domain,🎬 流媒体解锁"
-  - "RULE-SET,hbo_domain,🎬 流媒体解锁"
-  - "RULE-SET,hulu_domain,🎬 流媒体解锁"
-  - "RULE-SET,primevideo_domain,🎬 流媒体解锁"
-  - "RULE-SET,spotify_domain,🎬 流媒体解锁"
-  - "RULE-SET,tiktok_domain,🎬 流媒体解锁"
-  - "RULE-SET,apple_tv_domain,🎬 流媒体解锁"
-  - "RULE-SET,discoveryplus_domain,🎬 流媒体解锁"
-  - "RULE-SET,bahamut_domain,🎬 流媒体解锁"
-  - "RULE-SET,biliintl_domain,🎬 流媒体解锁"
-
-  - "RULE-SET,github_domain,PROXY"
-  # 国际学术平台优先代理，避免被通用中国域名规则误判为直连。
-  - "RULE-SET,academic_platforms,PROXY"
-  # google-cn 中部分 CDN/API 域名在国内直连容易超时，先精确送代理。
-  - "RULE-SET,google_proxy_static,PROXY"
-  - "RULE-SET,google_cn_domain,🎯 全球直连"
-  - "RULE-SET,google_domain,PROXY"
-
-  # 微软 / 苹果：默认直连，但可在策略组里手动切到代理。
-  # Apple TV+ 已在上方流媒体规则中优先匹配，这里只兜底基础 Apple / iCloud 服务。
-  - "RULE-SET,microsoft_cn_domain,Ⓜ️ 微软服务"
-  - "RULE-SET,onedrive_domain,Ⓜ️ 微软服务"
-  - "RULE-SET,microsoft_domain,Ⓜ️ 微软服务"
-  - "DOMAIN-SUFFIX,icloud.com,🍎 苹果服务"
-  - "DOMAIN-SUFFIX,icloud.com.cn,🍎 苹果服务"
-  - "DOMAIN-SUFFIX,apple.com,🍎 苹果服务"
-  - "DOMAIN-SUFFIX,mzstatic.com,🍎 苹果服务"
-  - "DOMAIN-SUFFIX,itunes.com,🍎 苹果服务"
-  - "DOMAIN-SUFFIX,icloud-content.com,🍎 苹果服务"
-  - "DOMAIN-SUFFIX,cdn-apple.com,🍎 苹果服务"
-  - "RULE-SET,apple_cn_domain,🍎 苹果服务"
-  - "RULE-SET,apple_domain,🍎 苹果服务"
-
-  # 常见中国接入点和国内域名/IP 直连
-  - "RULE-SET,steam_cn_domain,🎯 全球直连"
-  - "RULE-SET,games_cn_domain,🎯 全球直连"
-  - "RULE-SET,cn_domain,🎯 全球直连"
-  - "RULE-SET,cn_ip,🎯 全球直连,no-resolve"
-
-  # 明确非中国域名和其他漏网流量默认走代理。
-  - "RULE-SET,geolocation_not_cn,PROXY"
-  - "MATCH,🐟 漏网之鱼"
+  - "GEOIP,PRIVATE,DIRECT,no-resolve"
+  - "GEOSITE,private,DIRECT"
+  - "GEOSITE,cn,DIRECT"
+  - "GEOIP,CN,DIRECT,no-resolve"
+  - "RULE-SET,ads_domain,REJECT"
+  - "GEOSITE,category-ai,PROXY"
+  - "GEOSITE,youtube,PROXY"
+  - "RULE-SET,x_twitter,PROXY"
+  - "GEOSITE,google,PROXY"
+  - "GEOIP,!CN,PROXY,no-resolve"
+  - "MATCH,DIRECT"
