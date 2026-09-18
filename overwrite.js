@@ -1,12 +1,14 @@
 /* Runestone V4 — routing-only Hako post-merge override.
  * Import the raw JavaScript URL, save, and select it after node-source merging.
  * Network settings and node objects are retained. Rules and groups are replaced.
- * URL import is a snapshot: re-import to upgrade. See docs/RUNESTONE_V4.md.
+ * URL import is a snapshot: re-import to upgrade.
  *
  * 5 groups only: PROXY / AUTO / US / JP / SG.
- * All rules default to PROXY except overseas AI, which goes to US.
+ * Rules are all GEOSITE / GEOIP inline rules (no rule-providers), so they
+ * follow the device's geosite.db / geoip.db and update dynamically.
+ * Default route is PROXY; overseas AI goes to US; Telegram goes DIRECT.
  */
-const RUNESTONE = {repository: "Sydney-Moses/Network-Profiles", personal: false};
+const RUNESTONE = {repository: "Sydney-Moses/Network-Profiles"};
 
 function main(config) {
   // Hako 当前选中的所有机场节点都会合并到 config.proxies。
@@ -218,11 +220,13 @@ function main(config) {
   // ============================================================
   // 3. 规则
   //
-  // 默认全部走 PROXY。
-  // 唯一例外：国外 AI 服务走 US。
+  // 全部使用 GEOSITE / GEOIP 内联规则，依赖设备自带的
+  // geosite.db / geoip.db，可随数据库更新而动态变化。
   //
-  // AI 规则集中在 REJECT 之前、其它规则之前，
-  // 避免被广告拦截或通用后缀规则抢先匹配。
+  // 默认全部走 PROXY。
+  // 两个例外：
+  //   国外 AI  → US
+  //   Telegram → DIRECT
   // ============================================================
 
   // 国外 AI：按 US 组的实际可用性决定落地策略组。
@@ -230,168 +234,43 @@ function main(config) {
 
   fixed.rules = [
     // 局域网直连
-    "IP-CIDR,192.168.0.0/16,DIRECT,no-resolve",
-    "IP-CIDR,10.0.0.0/8,DIRECT,no-resolve",
-    "IP-CIDR,172.16.0.0/12,DIRECT,no-resolve",
-    "IP-CIDR,127.0.0.0/8,DIRECT,no-resolve",
     "GEOIP,LAN,DIRECT,no-resolve",
+    "GEOIP,PRIVATE,DIRECT,no-resolve",
 
     // ============================================================
-    // 国外 AI → US（必须位于广告 REJECT 与通用规则之前）
+    // 国外 AI → US
+    //
+    // 必须位于广告拦截与其它规则之前。
     // ============================================================
 
-    // OpenAI / ChatGPT
-    "DOMAIN-SUFFIX,chatgpt.com," + AI,
-    "DOMAIN-SUFFIX,openai.com," + AI,
-    "DOMAIN-SUFFIX,oaistatic.com," + AI,
-    "DOMAIN-SUFFIX,oaiusercontent.com," + AI,
-    "DOMAIN-KEYWORD,openai," + AI,
-    "DOMAIN,chat.openai.com," + AI,
+    "GEOSITE,category-ai-!cn," + AI,
 
-    // Anthropic / Claude
-    "DOMAIN-SUFFIX,claude.ai," + AI,
-    "DOMAIN-SUFFIX,anthropic.com," + AI,
-    "DOMAIN-SUFFIX,claudeusercontent.com," + AI,
+    // ============================================================
+    // Telegram → DIRECT
+    // ============================================================
 
-    // Google Gemini / DeepMind / AI Studio
-    "DOMAIN-SUFFIX,gemini.google.com," + AI,
-    "DOMAIN-SUFFIX,aistudio.google.com," + AI,
-    "DOMAIN-SUFFIX,deepmind.com," + AI,
-    "DOMAIN-SUFFIX,deepmind.google," + AI,
-    "DOMAIN-SUFFIX,makersuite.google.com," + AI,
-    "DOMAIN-KEYWORD,bard.google," + AI,
+    "GEOSITE,telegram,DIRECT",
+    "GEOIP,telegram,DIRECT,no-resolve",
 
-    // xAI / Grok
-    "DOMAIN-SUFFIX,grok.com," + AI,
-    "DOMAIN-SUFFIX,x.ai," + AI,
+    // ============================================================
+    // 广告拦截
+    // ============================================================
 
-    // Microsoft Copilot / Bing Chat
-    "DOMAIN-SUFFIX,copilot.microsoft.com," + AI,
-    "DOMAIN-SUFFIX,copilot.com," + AI,
-    "DOMAIN-SUFFIX,ai.microsoft.com," + AI,
-    "DOMAIN-SUFFIX,designer.microsoft.com," + AI,
-    "DOMAIN-KEYWORD,copilot," + AI,
-    "DOMAIN-SUFFIX,bing.com," + AI,
-    "DOMAIN-SUFFIX,bing.net," + AI,
-
-    // Perplexity / Mistral / Cohere / Meta AI
-    "DOMAIN-SUFFIX,perplexity.ai," + AI,
-    "DOMAIN-SUFFIX,mistral.ai," + AI,
-    "DOMAIN-SUFFIX,cohere.ai," + AI,
-    "DOMAIN-SUFFIX,cohere.com," + AI,
-    "DOMAIN-SUFFIX,meta.ai," + AI,
-    "DOMAIN-SUFFIX,poe.com," + AI,
-    "DOMAIN-SUFFIX,character.ai," + AI,
-
-    // AI 通用 keyword 兜底（放在具体域名之后）
-    "DOMAIN-KEYWORD,claude," + AI,
-
-    // 广告 / 隐私
-    "RULE-SET,AdvertisingLite,REJECT",
-    "RULE-SET,AdvertisingLite_Domain,REJECT",
-    "RULE-SET,Privacy,REJECT",
-    "RULE-SET,Privacy_Domain,REJECT",
-    "RULE-SET,ACL4SSR_BanAD,REJECT",
-    "RULE-SET,ACL4SSR_BanProgramAD,REJECT",
+    "GEOSITE,category-ads-all,REJECT",
 
     // ============================================================
     // 中国大陆直连
     // ============================================================
-    "RULE-SET,ChinaMax,DIRECT",
-    "RULE-SET,ChinaMax_Domain,DIRECT",
-    "RULE-SET,ChinaMax_IP,DIRECT",
+
     "GEOSITE,CN,DIRECT",
     "GEOIP,CN,DIRECT,no-resolve",
 
+    // ============================================================
     // 最终兜底：其余全部走 PROXY
+    // ============================================================
+
     "MATCH,PROXY"
   ];
-
-  // ============================================================
-  // Rule Providers
-  // ============================================================
-
-  fixed["rule-providers"] = {
-    "AdvertisingLite": {
-      "type": "http",
-      "behavior": "classical",
-      "format": "yaml",
-      "interval": 86400,
-      "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/refs/heads/master/rule/Clash/AdvertisingLite/AdvertisingLite.yaml"
-    },
-
-    "AdvertisingLite_Domain": {
-      "type": "http",
-      "behavior": "domain",
-      "format": "mrs",
-      "interval": 86400,
-      "url": "https://raw.githubusercontent.com/Sydney-Moses/Network-Profiles/refs/heads/main/MRS/AdvertisingLite_Domain.mrs"
-    },
-
-    "Privacy": {
-      "type": "http",
-      "behavior": "classical",
-      "format": "yaml",
-      "interval": 86400,
-      "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/refs/heads/master/rule/Clash/Privacy/Privacy.yaml"
-    },
-
-    "Privacy_Domain": {
-      "type": "http",
-      "behavior": "domain",
-      "format": "mrs",
-      "interval": 86400,
-      "url": "https://raw.githubusercontent.com/Sydney-Moses/Network-Profiles/refs/heads/main/MRS/Privacy_Domain.mrs"
-    },
-
-    "ACL4SSR_BanAD": {
-      "type": "http",
-      "behavior": "domain",
-      "format": "mrs",
-      "interval": 86400,
-      "url": "https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/mrs/BanAD_domain.mrs"
-    },
-
-    "ACL4SSR_BanProgramAD": {
-      "type": "http",
-      "behavior": "domain",
-      "format": "mrs",
-      "interval": 86400,
-      "url": "https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/mrs/BanProgramAD_domain.mrs"
-    },
-
-    "ChinaMax": {
-      "type": "http",
-      "behavior": "classical",
-      "format": "yaml",
-      "interval": 86400,
-      "url": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/refs/heads/master/rule/Clash/ChinaMax/ChinaMax.yaml"
-    },
-
-    "ChinaMax_Domain": {
-      "type": "http",
-      "behavior": "domain",
-      "format": "mrs",
-      "interval": 86400,
-      "url": "https://raw.githubusercontent.com/Sydney-Moses/Network-Profiles/refs/heads/main/MRS/ChinaMax_Domain.mrs"
-    },
-
-    "ChinaMax_IP": {
-      "type": "http",
-      "behavior": "ipcidr",
-      "format": "mrs",
-      "interval": 86400,
-      "url": "https://raw.githubusercontent.com/Sydney-Moses/Network-Profiles/refs/heads/main/MRS/ChinaMax_IP.mrs"
-    }
-  };
-
-  // All project-owned MRS resources follow one configurable repository.
-  Object.values(fixed["rule-providers"]).forEach(provider => {
-    provider.url = provider.url.replace(
-      "Sydney-Moses/Network-Profiles",
-      RUNESTONE.repository
-    );
-  });
 
   fixed.rules = [...new Set(fixed.rules)];
 
