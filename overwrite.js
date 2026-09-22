@@ -6,7 +6,7 @@
  * 1. 将 GEOIP 规则替换为 blackmatrix7/ios_rule_script 的 YAML 规则集。
  * 2. 使用 raw.githubusercontent.com 原生直连地址。
  * 3. GEOSITE 规则保持不变，继续使用客户端内置数据库。
- * 4. 保留 try...catch 防断网、lazy 测速、AI Fallback 高可用、DNS 容灾。
+ * 4. 保留脚本失败回退、lazy 测速、AI Fallback 高可用、DNS 容灾。
  */
 
 const RUNESTONE = { repository: "Sydney-Moses/Network-Profiles" };
@@ -22,7 +22,7 @@ function main(config) {
 
     const currentProxies = Array.isArray(config.proxies) ? config.proxies : [];
     const currentProxyNames = currentProxies
-      .map(p => (typeof p === "string" ? p : (p && typeof p.name === "string" ? p.name : null)))
+      .map(p => (p && typeof p.name === "string" ? p.name : null))
       .filter(Boolean);
 
     if (!currentProxies.length) {
@@ -181,13 +181,6 @@ function main(config) {
         url: `${ruleBase}/Privacy/Privacy_Classical.yaml`,
         path: "./ruleset/Privacy_Classical.yaml",
         interval: 86400
-      },
-      "telegram-ip": {
-        type: "http",
-        behavior: "classical",
-        url: `${ruleBase}/Telegram/Telegram.yaml`,
-        path: "./ruleset/Telegram.yaml",
-        interval: 86400
       }
     });
 
@@ -202,9 +195,8 @@ function main(config) {
       // 国外 AI -> 使用高可用 Fallback 组 (保留 GeoSite)
       "GEOSITE,category-ai-!cn,🤖 AI-Fallback",
 
-      // Telegram -> 直连 (GeoSite 管域名，Rule-Set 管 IP)
+      // Telegram -> 直连，使用 Telegram 自带代理
       "GEOSITE,telegram,DIRECT",
-      "RULE-SET,telegram-ip,DIRECT,no-resolve",
 
       // 广告拦截 (保留 GeoSite)
       "GEOSITE,category-ads-all,REJECT",
