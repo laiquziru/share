@@ -112,7 +112,10 @@ function main(config) {
 
     const allRegionalNodes = [];
     regionalAutos.forEach(a => a.nodes.forEach(n => { if (!allRegionalNodes.includes(n)) allRegionalNodes.push(n); }));
-    const autoPool = allRegionalNodes.length ? allRegionalNodes : currentProxyNames.slice();
+    const unmatchedNodes = currentProxyNames.filter(n => !allRegionalNodes.includes(n));
+    const autoPool = allRegionalNodes.length
+      ? [...allRegionalNodes, ...unmatchedNodes]
+      : currentProxyNames.slice();
 
     // ------------------------------------------------------------
     // 3. 策略组 (包含 AI Fallback 与省电优化)
@@ -146,7 +149,7 @@ function main(config) {
 
     const aiFallbackProxies = [];
     if (regionalNodes.US) aiFallbackProxies.push(autoByKey.US);
-    aiFallbackProxies.push("AUTO", "DIRECT");
+    aiFallbackProxies.push("AUTO");
 
     fixed["proxy-groups"].push({
       name: "🤖 AI-Fallback", type: "fallback", icon: groupIcon.US, proxies: aiFallbackProxies
@@ -185,13 +188,6 @@ function main(config) {
         url: `${ruleBase}/Telegram/Telegram.yaml`,
         path: "./ruleset/Telegram.yaml",
         interval: 86400
-      },
-      "cn-ip": {
-        type: "http",
-        behavior: "classical",
-        url: `${ruleBase}/China/China_Classical.yaml`,
-        path: "./ruleset/China_Classical.yaml",
-        interval: 86400
       }
     });
 
@@ -213,12 +209,11 @@ function main(config) {
       // 广告拦截 (保留 GeoSite)
       "GEOSITE,category-ads-all,REJECT",
 
-      // 中国大陆直连 (GeoSite 管域名，Rule-Set 管 IP)
-      "GEOSITE,CN,DIRECT",
-      "RULE-SET,cn-ip,DIRECT,no-resolve",
+      // GFW 域名走代理
+      "GEOSITE,gfw,PROXY",
 
       // 最终兜底
-      "MATCH,PROXY"
+      "MATCH,DIRECT"
     ];
 
     fixed.rules = [...new Set(fixed.rules)];
