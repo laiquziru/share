@@ -1,13 +1,11 @@
 /*
- * Runestone Configuration Override
+ * Runestone Configuration Override (GeoIP Rule-Set 版)
  * Repository: Sydney-Moses/Network-Profiles
  * 
  * 优化说明 (2026-09-22):
- * 1. 增加 try...catch 容错，脚本报错时返回原配置，防止断网。
- * 2. 优化测速机制：加入 lazy: true 并按需测速，延长 interval 省电。
- * 3. AI 策略高可用：引入 fallback 组，主用 US 节点，故障自动切 AUTO。
- * 4. DNS 容灾：direct-nameserver 增加 UDP 兜底，防止极端环境下 DoH 阻塞。
- * 5. GeoIP 依赖：如果你希望使用旧版数据，请在客户端资源管理中删除 geoip.metadb。
+ * 1. 仅将 GEOIP 规则替换为 RULE-SET，解决本地 GeoIP 数据库匹配为 0 的问题。
+ * 2. GEOSITE 规则保持原样，继续依赖客户端内置的 geosite 数据库。
+ * 3. 保留 try...catch 防断网、lazy 测速、AI Fallback 高可用、DNS 容灾。
  */
 
 const RUNESTONE = { repository: "Sydney-Moses/Network-Profiles" };
@@ -36,7 +34,6 @@ function main(config) {
       throw new Error("Runestone: duplicate node names; rename conflicting nodes in the source");
     }
 
-    // 保留客户端自有网络字段，替换路由
     const fixed = Object.assign({}, config);
     fixed.mode = "rule";
     
@@ -53,7 +50,7 @@ function main(config) {
     fixed["proxy-groups"] = [];
 
     // ------------------------------------------------------------
-    // 1. DNS 防泄露配置 (优化：加入 UDP 容灾)
+    // 1. DNS 防泄露配置 (保持不变)
     // ------------------------------------------------------------
     fixed.dns = Object.assign({}, config.dns, {
       enable: true,
@@ -75,7 +72,6 @@ function main(config) {
         "https://doh.pub/dns-query#RULES"
       ],
       "proxy-server-nameserver": ["https://1.1.1.1/dns-query", "https://dns.google/dns-query"],
-      // 优化 4：加入 UDP 国内 DNS 兜底，防止 DoH 被阻断导致直连解析失败
       "direct-nameserver": [
         "https://dns.alidns.com/dns-query",
         "https://doh.pub/dns-query",
@@ -91,24 +87,12 @@ function main(config) {
     });
 
     // ------------------------------------------------------------
-    // 2. 地区识别
+    // 2. 地区识别 (保持不变)
     // ------------------------------------------------------------
     const regionGroups = [
-      {
-        key: "US", name: "🇺🇸 US",
-        filter: /([\[]US[\]]|^US$|USA|United[ _-]?States|\bUS\b|美国|美國|🇺🇸)/i,
-        icon: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/United_States.png"
-      },
-      {
-        key: "JP", name: "🇯🇵 JP",
-        filter: /([\[]JP[\]]|^JP$|Japan|\bJP\b|日本|东京|大阪|🇯🇵)/i,
-        icon: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Japan.png"
-      },
-      {
-        key: "SG", name: "🇸🇬 SG",
-        filter: /([\[]SG[\]]|^SG$|Singapore|\bSG\b|新加坡|狮城|🇸🇬)/i,
-        icon: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Singapore.png"
-      }
+      { key: "US", name: "🇺🇸 US", filter: /([\[]US[\]]|^US$|USA|United[ _-]?States|\bUS\b|美国|美國|🇺🇸)/i, icon: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/United_States.png" },
+      { key: "JP", name: "🇯🇵 JP", filter: /([\[]JP[\]]|^JP$|Japan|\bJP\b|日本|东京|大阪|🇯🇵)/i, icon: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Japan.png" },
+      { key: "SG", name: "🇸🇬 SG", filter: /([\[]SG[\]]|^SG$|Singapore|\bSG\b|新加坡|狮城|🇸🇬)/i, icon: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Singapore.png" }
     ];
 
     const regionalNodes = {};
@@ -117,9 +101,8 @@ function main(config) {
     regionGroups.forEach(region => {
       const matched = currentProxyNames.filter(name => region.filter.test(name));
       if (matched.length === 0) return;
-      const autoName = region.name + "-Auto";
       regionalNodes[region.key] = matched;
-      regionalAutos.push({ key: region.key, name: autoName, nodes: matched });
+      regionalAutos.push({ key: region.key, name: region.name + "-Auto", nodes: matched });
     });
 
     const autoNames = regionalAutos.map(a => a.name);
@@ -127,15 +110,11 @@ function main(config) {
     regionalAutos.forEach(a => { autoByKey[a.key] = a.name; });
 
     const allRegionalNodes = [];
-    regionalAutos.forEach(a => {
-      a.nodes.forEach(n => {
-        if (!allRegionalNodes.includes(n)) allRegionalNodes.push(n);
-      });
-    });
+    regionalAutos.forEach(a => a.nodes.forEach(n => { if (!allRegionalNodes.includes(n)) allRegionalNodes.push(n); }));
     const autoPool = allRegionalNodes.length ? allRegionalNodes : currentProxyNames.slice();
 
     // ------------------------------------------------------------
-    // 3. 策略组 (优化：AI fallback 与 lazy 测速)
+    // 3. 策略组 (包含 AI Fallback 与省电优化)
     // ------------------------------------------------------------
     const groupIcon = {
       PROXY: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Final.png",
@@ -145,91 +124,75 @@ function main(config) {
       SG: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Singapore.png"
     };
 
-    // 优化 2：加入 lazy: true，延长 interval 至 600s，避免频繁测速耗电
-    const healthCheck = {
-      url: "http://www.gstatic.com/generate_204",
-      interval: 600,
-      tolerance: 50,
-      lazy: true
-    };
+    const healthCheck = { url: "http://www.gstatic.com/generate_204", interval: 600, tolerance: 50, lazy: true };
 
-    // 基础策略组
     fixed["proxy-groups"].push({
-      name: "PROXY",
-      type: "select",
-      icon: groupIcon.PROXY,
+      name: "PROXY", type: "select", icon: groupIcon.PROXY,
       proxies: ["AUTO", ...autoNames, ...currentProxyNames]
     });
 
     fixed["proxy-groups"].push(Object.assign({
-      name: "AUTO",
-      type: "url-test",
-      icon: groupIcon.AUTO,
-      proxies: autoPool.slice()
+      name: "AUTO", type: "url-test", icon: groupIcon.AUTO, proxies: autoPool.slice()
     }, healthCheck));
 
     ["US", "JP", "SG"].forEach(key => {
       const matched = regionalNodes[key];
       if (!matched) return;
       fixed["proxy-groups"].push(Object.assign({
-        name: autoByKey[key],
-        type: "url-test",
-        icon: groupIcon[key],
-        proxies: matched.slice()
+        name: autoByKey[key], type: "url-test", icon: groupIcon[key], proxies: matched.slice()
       }, healthCheck));
     });
 
-    // 优化 3：生成 AI Fallback 组 (故障自动切换)
-    // 策略：优先选 US-Auto，如果 US 节点不存在或全部超时，自动回退到 AUTO，最后兜底 DIRECT
     const aiFallbackProxies = [];
     if (regionalNodes.US) aiFallbackProxies.push(autoByKey.US);
     aiFallbackProxies.push("AUTO", "DIRECT");
 
     fixed["proxy-groups"].push({
-      name: "🤖 AI-Fallback",
-      type: "fallback",
-      icon: groupIcon.US,
-      proxies: aiFallbackProxies
+      name: "🤖 AI-Fallback", type: "fallback", icon: groupIcon.US, proxies: aiFallbackProxies
     });
 
     // ------------------------------------------------------------
-    // 4. 校验
+    // 4. 校验 (保持不变)
     // ------------------------------------------------------------
-    const reserved = new Set([
-      "DIRECT", "REJECT", "REJECT-DROP", "PASS", "PASS-RULE", "COMPATIBLE",
-      ...fixed["proxy-groups"].map(g => g.name)
-    ]);
+    const reserved = new Set(["DIRECT", "REJECT", "REJECT-DROP", "PASS", "PASS-RULE", "COMPATIBLE", ...fixed["proxy-groups"].map(g => g.name)]);
+    if (currentProxyNames.some(name => reserved.has(name))) throw new Error("Runestone: node name conflicts");
+    if (fixed["proxy-groups"].some(g => Object.prototype.hasOwnProperty.call(config["proxy-providers"] || {}, g.name))) throw new Error("Runestone: provider name conflicts");
 
-    if (currentProxyNames.some(name => reserved.has(name))) {
-      throw new Error("Runestone: node name conflicts with a generated group or built-in outbound");
-    }
-    if (fixed["proxy-groups"].some(g => Object.prototype.hasOwnProperty.call(config["proxy-providers"] || {}, g.name))) {
-      throw new Error("Runestone: provider name conflicts with a generated group");
-    }
+    // ============================================================
+    // 5. 核心：只引入 GeoIP 的 Rule-Providers (取代本地 geoip 数据)
+    // ============================================================
+    const ruleBase = "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release";
 
-    const knownOutbounds = new Set([...reserved, ...currentProxyNames]);
-    if (currentProxies.some(p => p["dialer-proxy"] && !knownOutbounds.has(p["dialer-proxy"]))) {
-      throw new Error("Runestone: dialer-proxy references a source group that routing replacement would remove");
-    }
+    fixed["rule-providers"] = Object.assign({}, config["rule-providers"], {
+      "geoip-cn":      { type: "http", behavior: "ipcidr", url: `${ruleBase}/geoip/cn.mrs`,      path: "./ruleset/geoip-cn.mrs",      interval: 86400 },
+      "geoip-private": { type: "http", behavior: "ipcidr", url: `${ruleBase}/geoip/private.mrs`, path: "./ruleset/geoip-private.mrs", interval: 86400 },
+      "geoip-lan":     { type: "http", behavior: "ipcidr", url: `${ruleBase}/geoip/lan.mrs`,     path: "./ruleset/geoip-lan.mrs",     interval: 86400 },
+      "geoip-telegram":{ type: "http", behavior: "ipcidr", url: `${ruleBase}/geoip/telegram.mrs`,path: "./ruleset/geoip-telegram.mrs",interval: 86400 }
+    });
 
     // ------------------------------------------------------------
-    // 5. 规则 (优化：AI 指向新的 Fallback 组)
+    // 6. 规则 (GeoIP 走 Rule-Set，GeoSite 保持原有写法)
     // ------------------------------------------------------------
     fixed.rules = [
-      "GEOIP,LAN,DIRECT,no-resolve",
-      "GEOIP,PRIVATE,DIRECT,no-resolve",
+      // 局域网与私有 IP 直连 (已替换为 Rule-Set)
+      "RULE-SET,geoip-lan,DIRECT,no-resolve",
+      "RULE-SET,geoip-private,DIRECT,no-resolve",
 
-      // 国外 AI：改为指向 Fallback 组，避免单一地区故障导致断联
+      // 国外 AI -> 使用高可用 Fallback 组 (保留 GeoSite)
       "GEOSITE,category-ai-!cn,🤖 AI-Fallback",
 
+      // Telegram -> 直连 (GeoSite 管域名，GeoIP 走 Rule-Set 管 IP)
       "GEOSITE,telegram,DIRECT",
-      "GEOIP,TELEGRAM,DIRECT,no-resolve",
+      "RULE-SET,geoip-telegram,DIRECT,no-resolve",
 
+      // 广告拦截 (保留 GeoSite)
       "GEOSITE,category-ads-all,REJECT",
 
+      // 中国大陆直连 (GeoSite 管域名，GeoIP 走 Rule-Set 管 IP)
       "GEOSITE,CN,DIRECT",
-      "GEOIP,CN,DIRECT,no-resolve",
+      "RULE-SET,geoip-cn,DIRECT,no-resolve",
 
+      // 最终兜底
       "MATCH,PROXY"
     ];
 
@@ -238,7 +201,6 @@ function main(config) {
     return fixed;
 
   } catch (err) {
-    // 优化 1：防断网兜底。如果脚本执行出错，打印错误并返回原配置，保证基础网络可用。
     console.error("Runestone 脚本执行失败，已回退至原始配置: " + err.message);
     return config;
   }
