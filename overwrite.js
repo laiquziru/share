@@ -1,10 +1,10 @@
 /*
- * Runestone Configuration Override (纯文本 Rule-Set 版)
+ * Runestone Configuration Override (Loyalsoldier Rule-Set 版)
  * Repository: Sydney-Moses/Network-Profiles
  * 
  * 优化说明 (2026-09-22):
- * 1. 移除所有本地 GEOIP 依赖，改用 format: "text" 的网络 .txt 规则集。
- * 2. 保留 GEOSITE 规则，继续使用客户端内置数据库。
+ * 1. 仅将 GEOIP 规则替换为 Loyalsoldier 纯文本 .txt Rule-Set。
+ * 2. GEOSITE 规则保持不变，继续使用客户端内置数据库。
  * 3. 保留 try...catch 防断网、lazy 测速、AI Fallback 高可用、DNS 容灾。
  */
 
@@ -159,24 +159,24 @@ function main(config) {
     if (fixed["proxy-groups"].some(g => Object.prototype.hasOwnProperty.call(config["proxy-providers"] || {}, g.name))) throw new Error("Runestone: provider name conflicts");
 
     // ============================================================
-    // 5. 核心：纯文本 .txt 规则集 (format: "text")
+    // 5. 核心：使用 Loyalsoldier 纯文本 IP 规则集 (format: "text")
     // ============================================================
-    const ruleBase = "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release";
+    const ruleBase = "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release";
 
     fixed["rule-providers"] = Object.assign({}, config["rule-providers"], {
       "lan-ip": {
         type: "http",
         behavior: "ipcidr",
         format: "text",
-        url: `${ruleBase}/geoip/lan.txt`,
-        path: "./ruleset/lan.txt",
+        url: `${ruleBase}/lancidr.txt`,
+        path: "./ruleset/lancidr.txt",
         interval: 86400
       },
       "private-ip": {
         type: "http",
         behavior: "ipcidr",
         format: "text",
-        url: `${ruleBase}/geoip/private.txt`,
+        url: `${ruleBase}/private.txt`,
         path: "./ruleset/private.txt",
         interval: 86400
       },
@@ -184,16 +184,16 @@ function main(config) {
         type: "http",
         behavior: "ipcidr",
         format: "text",
-        url: `${ruleBase}/geoip/cn.txt`,
-        path: "./ruleset/cn.txt",
+        url: `${ruleBase}/cncidr.txt`,
+        path: "./ruleset/cncidr.txt",
         interval: 86400
       },
       "telegram-ip": {
         type: "http",
         behavior: "ipcidr",
         format: "text",
-        url: `${ruleBase}/geoip/telegram.txt`,
-        path: "./ruleset/telegram.txt",
+        url: `${ruleBase}/telegramcidr.txt`,
+        path: "./ruleset/telegramcidr.txt",
         interval: 86400
       }
     });
@@ -202,7 +202,7 @@ function main(config) {
     // 6. 规则 (Rule-Set 只用于 GeoIP，GeoSite 保持不变)
     // ------------------------------------------------------------
     fixed.rules = [
-      // 局域网与私有 IP 直连 (基于 .txt 文本规则集)
+      // 局域网与私有 IP 直连 (基于纯文本 .txt 规则集)
       "RULE-SET,lan-ip,DIRECT,no-resolve",
       "RULE-SET,private-ip,DIRECT,no-resolve",
 
