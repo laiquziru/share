@@ -1,11 +1,12 @@
 /*
- * Runestone Configuration Override (Loyalsoldier Rule-Set 版)
+ * Runestone Configuration Override (blackmatrix7 Rule-Set 直连版)
  * Repository: Sydney-Moses/Network-Profiles
  * 
  * 优化说明 (2026-09-22):
- * 1. 仅将 GEOIP 规则替换为 Loyalsoldier 纯文本 .txt Rule-Set。
- * 2. GEOSITE 规则保持不变，继续使用客户端内置数据库。
- * 3. 保留 try...catch 防断网、lazy 测速、AI Fallback 高可用、DNS 容灾。
+ * 1. 将 GEOIP 规则替换为 blackmatrix7/ios_rule_script 的 YAML 规则集。
+ * 2. 使用 raw.githubusercontent.com 原生直连地址。
+ * 3. GEOSITE 规则保持不变，继续使用客户端内置数据库。
+ * 4. 保留 try...catch 防断网、lazy 测速、AI Fallback 高可用、DNS 容灾。
  */
 
 const RUNESTONE = { repository: "Sydney-Moses/Network-Profiles" };
@@ -159,50 +160,46 @@ function main(config) {
     if (fixed["proxy-groups"].some(g => Object.prototype.hasOwnProperty.call(config["proxy-providers"] || {}, g.name))) throw new Error("Runestone: provider name conflicts");
 
     // ============================================================
-    // 5. 核心：使用 Loyalsoldier 纯文本 IP 规则集 (format: "text")
+    // 5. 核心：blackmatrix7 规则集 (原生 raw.githubusercontent.com)
     // ============================================================
-    const ruleBase = "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release";
+    const ruleBase = "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash";
 
     fixed["rule-providers"] = Object.assign({}, config["rule-providers"], {
       "lan-ip": {
         type: "http",
-        behavior: "ipcidr",
-        format: "text",
-        url: `${ruleBase}/lancidr.txt`,
-        path: "./ruleset/lancidr.txt",
+        behavior: "classical",
+        url: `${ruleBase}/Lan/Lan.yaml`,
+        path: "./ruleset/Lan.yaml",
         interval: 86400
       },
       "private-ip": {
         type: "http",
-        behavior: "ipcidr",
-        format: "text",
-        url: `${ruleBase}/private.txt`,
-        path: "./ruleset/private.txt",
-        interval: 86400
-      },
-      "cn-ip": {
-        type: "http",
-        behavior: "ipcidr",
-        format: "text",
-        url: `${ruleBase}/cncidr.txt`,
-        path: "./ruleset/cncidr.txt",
+        behavior: "classical",
+        url: `${ruleBase}/Privacy/Privacy_Classical.yaml`,
+        path: "./ruleset/Privacy_Classical.yaml",
         interval: 86400
       },
       "telegram-ip": {
         type: "http",
-        behavior: "ipcidr",
-        format: "text",
-        url: `${ruleBase}/telegramcidr.txt`,
-        path: "./ruleset/telegramcidr.txt",
+        behavior: "classical",
+        url: `${ruleBase}/Telegram/Telegram.yaml`,
+        path: "./ruleset/Telegram.yaml",
+        interval: 86400
+      },
+      "cn-ip": {
+        type: "http",
+        behavior: "classical",
+        url: `${ruleBase}/China/China_Classical.yaml`,
+        path: "./ruleset/China_Classical.yaml",
         interval: 86400
       }
     });
 
     // ------------------------------------------------------------
-    // 6. 规则 (Rule-Set 只用于 GeoIP，GeoSite 保持不变)
+    // 6. 规则 (Rule-Set 替换 GeoIP，GeoSite 保持不变)
     // ------------------------------------------------------------
     fixed.rules = [
-      // 局域网与私有 IP 直连 (基于纯文本 .txt 规则集)
+      // 局域网与私有 IP 直连 (使用 Rule-Set)
       "RULE-SET,lan-ip,DIRECT,no-resolve",
       "RULE-SET,private-ip,DIRECT,no-resolve",
 
