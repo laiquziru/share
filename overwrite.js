@@ -1,10 +1,10 @@
 /*
- * Runestone Configuration Override (GeoIP Rule-Set 版)
+ * Runestone Configuration Override (纯文本 Rule-Set 版)
  * Repository: Sydney-Moses/Network-Profiles
  * 
  * 优化说明 (2026-09-22):
- * 1. 仅将 GEOIP 规则替换为 RULE-SET，解决本地 GeoIP 数据库匹配为 0 的问题。
- * 2. GEOSITE 规则保持原样，继续依赖客户端内置的 geosite 数据库。
+ * 1. 移除所有本地 GEOIP 依赖，改用 format: "text" 的网络 .txt 规则集。
+ * 2. 保留 GEOSITE 规则，继续使用客户端内置数据库。
  * 3. 保留 try...catch 防断网、lazy 测速、AI Fallback 高可用、DNS 容灾。
  */
 
@@ -159,38 +159,66 @@ function main(config) {
     if (fixed["proxy-groups"].some(g => Object.prototype.hasOwnProperty.call(config["proxy-providers"] || {}, g.name))) throw new Error("Runestone: provider name conflicts");
 
     // ============================================================
-    // 5. 核心：只引入 GeoIP 的 Rule-Providers (取代本地 geoip 数据)
+    // 5. 核心：纯文本 .txt 规则集 (format: "text")
     // ============================================================
     const ruleBase = "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release";
 
     fixed["rule-providers"] = Object.assign({}, config["rule-providers"], {
-      "geoip-cn":      { type: "http", behavior: "ipcidr", url: `${ruleBase}/geoip/cn.mrs`,      path: "./ruleset/geoip-cn.mrs",      interval: 86400 },
-      "geoip-private": { type: "http", behavior: "ipcidr", url: `${ruleBase}/geoip/private.mrs`, path: "./ruleset/geoip-private.mrs", interval: 86400 },
-      "geoip-lan":     { type: "http", behavior: "ipcidr", url: `${ruleBase}/geoip/lan.mrs`,     path: "./ruleset/geoip-lan.mrs",     interval: 86400 },
-      "geoip-telegram":{ type: "http", behavior: "ipcidr", url: `${ruleBase}/geoip/telegram.mrs`,path: "./ruleset/geoip-telegram.mrs",interval: 86400 }
+      "lan-ip": {
+        type: "http",
+        behavior: "ipcidr",
+        format: "text",
+        url: `${ruleBase}/geoip/lan.txt`,
+        path: "./ruleset/lan.txt",
+        interval: 86400
+      },
+      "private-ip": {
+        type: "http",
+        behavior: "ipcidr",
+        format: "text",
+        url: `${ruleBase}/geoip/private.txt`,
+        path: "./ruleset/private.txt",
+        interval: 86400
+      },
+      "cn-ip": {
+        type: "http",
+        behavior: "ipcidr",
+        format: "text",
+        url: `${ruleBase}/geoip/cn.txt`,
+        path: "./ruleset/cn.txt",
+        interval: 86400
+      },
+      "telegram-ip": {
+        type: "http",
+        behavior: "ipcidr",
+        format: "text",
+        url: `${ruleBase}/geoip/telegram.txt`,
+        path: "./ruleset/telegram.txt",
+        interval: 86400
+      }
     });
 
     // ------------------------------------------------------------
-    // 6. 规则 (GeoIP 走 Rule-Set，GeoSite 保持原有写法)
+    // 6. 规则 (Rule-Set 只用于 GeoIP，GeoSite 保持不变)
     // ------------------------------------------------------------
     fixed.rules = [
-      // 局域网与私有 IP 直连 (已替换为 Rule-Set)
-      "RULE-SET,geoip-lan,DIRECT,no-resolve",
-      "RULE-SET,geoip-private,DIRECT,no-resolve",
+      // 局域网与私有 IP 直连 (基于 .txt 文本规则集)
+      "RULE-SET,lan-ip,DIRECT,no-resolve",
+      "RULE-SET,private-ip,DIRECT,no-resolve",
 
       // 国外 AI -> 使用高可用 Fallback 组 (保留 GeoSite)
       "GEOSITE,category-ai-!cn,🤖 AI-Fallback",
 
-      // Telegram -> 直连 (GeoSite 管域名，GeoIP 走 Rule-Set 管 IP)
+      // Telegram -> 直连 (GeoSite 管域名，Rule-Set 管 IP)
       "GEOSITE,telegram,DIRECT",
-      "RULE-SET,geoip-telegram,DIRECT,no-resolve",
+      "RULE-SET,telegram-ip,DIRECT,no-resolve",
 
       // 广告拦截 (保留 GeoSite)
       "GEOSITE,category-ads-all,REJECT",
 
-      // 中国大陆直连 (GeoSite 管域名，GeoIP 走 Rule-Set 管 IP)
+      // 中国大陆直连 (GeoSite 管域名，Rule-Set 管 IP)
       "GEOSITE,CN,DIRECT",
-      "RULE-SET,geoip-cn,DIRECT,no-resolve",
+      "RULE-SET,cn-ip,DIRECT,no-resolve",
 
       // 最终兜底
       "MATCH,PROXY"
