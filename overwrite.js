@@ -201,6 +201,19 @@ function main(config) {
       // 广告拦截 (保留 GeoSite)
       "GEOSITE,category-ads-all,REJECT",
 
+      // Instagram -> 代理
+      "GEOSITE,instagram,PROXY",
+
+      // 常用境外服务 -> 代理
+      "GEOSITE,google,PROXY",
+      "GEOSITE,github,PROXY",
+      "GEOSITE,twitter,PROXY",
+      "GEOSITE,youtube,PROXY",
+      "GEOSITE,netflix,PROXY",
+      "GEOSITE,spotify,PROXY",
+      "GEOSITE,tiktok,PROXY",
+      "GEOSITE,category-scholar-!cn,PROXY",
+
       // GFW 域名走代理
       "GEOSITE,gfw,PROXY",
 
