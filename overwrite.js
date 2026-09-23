@@ -75,15 +75,17 @@ function main(config) {
       "proxy-server-nameserver": ["https://1.1.1.1/dns-query", "https://dns.google/dns-query"],
       "direct-nameserver": [
         "https://dns.alidns.com/dns-query",
-        "https://doh.pub/dns-query",
-        "223.5.5.5",
-        "119.29.29.29"
+        "https://doh.pub/dns-query"
       ],
       "direct-nameserver-follow-policy": true,
       "respect-rules": true,
       "nameserver-policy": {
         "geosite:cn": ["https://dns.alidns.com/dns-query", "https://doh.pub/dns-query"],
-        "geosite:private": ["223.5.5.5", "119.29.29.29"]
+        "geosite:private": ["system"],
+        "geosite:gfw": [
+          "https://1.1.1.1/dns-query#RULES",
+          "https://dns.google/dns-query#RULES"
+        ]
       }
     });
 
