@@ -1,12 +1,15 @@
 /*
- * Runestone Configuration Override (blackmatrix7 Rule-Set 直连版)
+ * Runestone Configuration Override (常用境外服务代理版)
  * Repository: Sydney-Moses/Network-Profiles
  * 
- * 优化说明 (2026-09-22):
- * 1. 将 GEOIP 规则替换为 blackmatrix7/ios_rule_script 的 YAML 规则集。
- * 2. 使用 raw.githubusercontent.com 原生直连地址。
- * 3. GEOSITE 规则保持不变，继续使用客户端内置数据库。
- * 4. 保留脚本失败回退、lazy 测速、AI Fallback 高可用、DNS 容灾。
+ * 配置说明 (2026-09-23):
+ * 1. 使用 rule 模式、fake-ip 和 lazy 测速。
+ * 2. GFW、Instagram、Google、GitHub、X、YouTube、Netflix、Spotify、TikTok
+ *    以及非中国学术站点走 PROXY。
+ * 3. Telegram 保持 DIRECT，由 Telegram 自带代理负责连接。
+ * 4. 广告规则 REJECT；局域网和私有地址使用 blackmatrix7 规则集直连。
+ * 5. 不再设置 CN 直连规则，未匹配流量最终使用 MATCH,DIRECT。
+ * 6. DNS 使用 DoH、fake-ip 和分流策略；私有域名使用系统 DNS。
  */
 
 const RUNESTONE = { repository: "Sydney-Moses/Network-Profiles" };
