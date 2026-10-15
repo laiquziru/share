@@ -179,9 +179,19 @@ function main(config) {
 
     // 国外 AI 故障转移组 (优先美国自动测速，异常时回退至全局 AUTO)
     const aiFallbackProxies = [];
-    if (regionalNodes.US) aiFallbackProxies.push(autoByKey.US);
-    aiFallbackProxies.push("SG-Auto");
-    aiFallbackProxies.push("JP-Auto");
+    if (regionalNodes.US) {
+    aiFallbackProxies.push(autoByKey.US);
+    }
+
+    if (regionalNodes.SG) {
+      aiFallbackProxies.push(autoByKey.SG);
+      }
+    if (regionalNodes.JP) {
+      aiFallbackProxies.push(autoByKey.JP);
+    }
+
+// 始终保留全局 AUTO 作为最后候选项
+  aiFallbackProxies.push("AUTO");
 
     fixed["proxy-groups"].push(Object.assign({
       name: "🤖 AI",
