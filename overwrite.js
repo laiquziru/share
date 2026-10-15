@@ -139,7 +139,8 @@ function main(config) {
       FINAL: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Final.png",
       US: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/United_States.png",
       JP: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Japan.png",
-      SG: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Singapore.png"
+      SG: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Singapore.png",
+      AI: "https://raw.githubusercontent.com/laiquziru/share/refs/heads/main/chatgpt.png"
     };
 
     const healthCheck = {
@@ -196,7 +197,7 @@ function main(config) {
     fixed["proxy-groups"].push(Object.assign({
       name: "🤖 AI",
       type: "fallback",
-      icon: groupIcon.US,
+      icon: groupIcon.AI,
       proxies: aiFallbackProxies
     }, healthCheck));
 
