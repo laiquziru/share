@@ -6,7 +6,7 @@
  * 1. 使用 rule 模式、fake-ip、geodata-mode 和 lazy 测速。
  * 2. 完全使用内置 GEOSITE 与 GEOIP 规则，无需下载外部 Rule-Set 规则集。
  * 3. GFW、Instagram、Google、GitHub、X、YouTube、Netflix、Spotify、TikTok
- *    以及非中国学术站点走 PROXY；国外 AI 服务走 AI-Fallback 高可用组。
+ *    以及非中国学术站点走 PROXY；国外 AI 服务走 AI 高可用组。
  * 4. Telegram 域名与 IP 保持 DIRECT，由 Telegram 自带代理负责连接。
  * 5. 广告规则前置 REJECT；局域网和私有地址使用 GEOSITE/GEOIP private 直连。
  * 6. 国内流量通过 GEOSITE/GEOIP cn 保底直连，最终未匹配流量交由「🐟 漏网之鱼」策略组自由切换（默认 DIRECT）。
@@ -180,10 +180,11 @@ function main(config) {
     // 国外 AI 故障转移组 (优先美国自动测速，异常时回退至全局 AUTO)
     const aiFallbackProxies = [];
     if (regionalNodes.US) aiFallbackProxies.push(autoByKey.US);
-    aiFallbackProxies.push("AUTO");
+    aiFallbackProxies.push("JP");
+    aiFallbackProxies.push("SG");
 
     fixed["proxy-groups"].push(Object.assign({
-      name: "🤖 AI-Fallback",
+      name: "🤖 AI",
       type: "fallback",
       icon: groupIcon.US,
       proxies: aiFallbackProxies
@@ -223,7 +224,7 @@ function main(config) {
       "GEOSITE,category-ads-all,REJECT",
 
       // 3. 国外 AI -> 高可用 Fallback 组
-      "GEOSITE,category-ai-!cn,🤖 AI-Fallback",
+      "GEOSITE,category-ai-!cn,🤖 AI",
 
       // 4. Telegram 域名与数据中心 IP -> 保持直连，由客户端自带代理负责连接
       // (若需在浏览器直接打开 t.me 链接，可将下方 DIRECT 改为 PROXY)
