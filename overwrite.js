@@ -73,7 +73,9 @@ function main(config) {
     const nameserverPolicy = {
       "geosite:private": ["system"],
       ["geosite:" + aiGeosite]: remoteDns.slice(),
-      "geosite:telegram": domesticDns.slice()
+       // Telegram DNS uses remote DoH to avoid local pollution. Traffic remains
+       // selectable through the Telegram policy group below.
+       "geosite:telegram": remoteDns.slice()
     };
     // 与业务规则共用分类，避免新增代理服务却遗漏 DNS 分流。
     proxyGeosites.forEach(site => {
@@ -117,9 +119,9 @@ function main(config) {
     // 2. 地区识别
     // ------------------------------------------------------------
     const regionGroups = [
-      { key: "US", name: "🇺🇸 US", filter: /([\[]US[\]]|^US$|USA|United[ _-]?States|\bUS\b|美国|美國|🇺🇸)/i, icon: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/United_States.png" },
-      { key: "JP", name: "🇯🇵 JP", filter: /([\[]JP[\]]|^JP$|Japan|\bJP\b|日本|东京|大阪|🇯🇵)/i, icon: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Japan.png" },
-      { key: "SG", name: "🇸🇬 SG", filter: /([\[]SG[\]]|^SG$|Singapore|\bSG\b|新加坡|狮城|🇸🇬)/i, icon: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Singapore.png" }
+      { key: "US", name: "🇺🇸 US", filter: /(?:^|[\s_\-()[\]])US(?:$|[\s_\-()[\]])|USA|United[ _-]?States|美国|美國|🇺🇸/i },
+      { key: "JP", name: "🇯🇵 JP", filter: /(?:^|[\s_\-()[\]])JP(?:$|[\s_\-()[\]])|Japan|日本|东京|大阪|🇯🇵/i },
+      { key: "SG", name: "🇸🇬 SG", filter: /(?:^|[\s_\-()[\]])SG(?:$|[\s_\-()[\]])|Singapore|新加坡|狮城|🇸🇬/i }
     ];
 
     const regionalNodes = {};
@@ -159,6 +161,12 @@ function main(config) {
 
     const healthCheck = {
       url: "https://www.gstatic.com/generate_204",
+      interval: 600,
+      lazy: true
+    };
+    const aiHealthCheck = {
+      // AI fallback checks an actual AI service landing page, not only generic reachability.
+      url: "https://chatgpt.com/robots.txt",
       interval: 600,
       lazy: true
     };
@@ -214,7 +222,7 @@ function main(config) {
       type: "fallback",
       icon: groupIcon.AI,
       proxies: aiFallbackProxies
-    }, healthCheck));
+    }, aiHealthCheck));
 
     // Telegram 独立开关；PROXY 跟随主代理组，选择会被 profile 记忆。
     fixed["proxy-groups"].push({
@@ -294,9 +302,9 @@ function main(config) {
       "GEOIP,netflix,PROXY,no-resolve",
       "GEOIP,twitter,PROXY,no-resolve",
 
-      // 7. 允许解析未分类域名的真实 IP，以便 fake-ip 模式下执行国内 IP 兜底。
+      // 7. 未分类域名不主动解析，减少国内 DNS 暴露；GEOSITE,cn 覆盖国内域名。
       "GEOSITE,cn,DIRECT",
-      "GEOIP,cn,DIRECT",
+      "GEOIP,cn,DIRECT,no-resolve",
 
       // 8. 最终未匹配流量 -> 交由「🐟 漏网之鱼」策略组决定 (默认 DIRECT)
       "MATCH,🐟 漏网之鱼"
