@@ -1,7 +1,4 @@
 /*
- * Runestone Configuration Override (常用境外服务代理版 - 纯 GeoSite/GeoIP 增强版)
- * Repository: Sydney-Moses/Network-Profiles
- *
  * 配置说明 (2026-10-15):
  * 1. 使用 rule 模式、fake-ip、geodata-mode 和 lazy 测速。
  * 2. 完全使用内置 GEOSITE 与 GEOIP 规则，无需下载外部 Rule-Set 规则集。
