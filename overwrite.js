@@ -180,7 +180,8 @@ function main(config) {
     // 国外 AI 故障转移组 (优先美国自动测速，异常时回退至全局 AUTO)
     const aiFallbackProxies = [];
     if (regionalNodes.US) aiFallbackProxies.push(autoByKey.US);
-    aiFallbackProxies.push("SG");
+    aiFallbackProxies.push("SG-Auto");
+    aiFallbackProxies.push("JP-Auto");
 
     fixed["proxy-groups"].push(Object.assign({
       name: "🤖 AI",
