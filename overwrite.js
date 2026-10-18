@@ -203,6 +203,17 @@ function main(config) {
       }, healthCheck));
     });
 
+    // 为香港提供一个独立的手动选择组，便于在需要时直接切换到香港节点或其自动测速组。
+    if (regionalNodes.HK) {
+      fixed["proxy-groups"].push({
+        name: "🇭🇰 HK",
+        type: "select",
+        icon: groupIcon.HK,
+        // 优先包含 DIRECT 与 HK-Auto（可用时），然后列出所有香港节点以供手动选择
+        proxies: ["DIRECT", autoByKey.HK, ...regionalNodes.HK.slice()].filter(Boolean)
+      });
+    }
+
     // 仅检测 HTTPS 连通性，不验证 AI 地区/IP 限制；顺序为 US -> SG -> JP -> AUTO。
     const aiFallbackProxies = [];
     if (regionalNodes.US) {
