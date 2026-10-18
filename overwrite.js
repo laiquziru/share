@@ -173,7 +173,7 @@ function main(config) {
       lazy: true
     };
 
-    // PROXY 组统一顺序：AUTO -> 🇭🇰 HK -> 🇭🇰 HK-Auto -> 其余 Auto -> 其余节点
+    // 主代理选择组：保持 PROXY 里内部顺序为 AUTO -> 🇭🇰 HK -> HK-Auto -> 其余 Auto -> 节点
     const proxyTargets = ["AUTO"];
     if (regionalNodes.HK) {
       proxyTargets.push("🇭🇰 HK");
@@ -206,8 +206,26 @@ function main(config) {
       proxies: autoPool.slice()
     }, healthCheck));
 
-    // 地区自动测速组
-    ["US", "JP", "SG", "HK"].forEach(key => {
+    // 外层顺序：AUTO -> 🇭🇰 HK -> HK-Auto -> 其它 Auto（仅保留 HK）
+    fixed["proxy-groups"].push({
+      name: "🇭🇰 HK",
+      type: "select",
+      icon: groupIcon.HK,
+      proxies: ["DIRECT", ...(autoByKey.HK ? [autoByKey.HK] : []), ...(regionalNodes.HK ? regionalNodes.HK.slice() : [])].filter(Boolean)
+    });
+
+    if (autoByKey.HK) {
+      fixed["proxy-groups"].push(Object.assign({
+        name: autoByKey.HK,
+        type: "url-test",
+        icon: groupIcon.HK,
+        tolerance: 50,
+        proxies: regionalNodes.HK.slice()
+      }, healthCheck));
+    }
+
+    // 只保留 HK 相关手动/自动组；US/JP/SG 不再额外创建手动组
+    ["US", "JP", "SG"].forEach(key => {
       const matched = regionalNodes[key];
       if (!matched) return;
       fixed["proxy-groups"].push(Object.assign({
@@ -217,14 +235,6 @@ function main(config) {
         tolerance: 50,
         proxies: matched.slice()
       }, healthCheck));
-    });
-
-    // 香港手动选择组（强制创建，保证 PROXY 里一定能看到）
-    fixed["proxy-groups"].push({
-      name: "🇭🇰 HK",
-      type: "select",
-      icon: groupIcon.HK,
-      proxies: ["DIRECT", ...(autoByKey.HK ? [autoByKey.HK] : []), ...regionalNodes.HK.slice()].filter(Boolean)
     });
 
     // 仅检测 HTTPS 连通性，不验证 AI 地区/IP 限制；顺序为 US -> SG -> JP -> AUTO。
