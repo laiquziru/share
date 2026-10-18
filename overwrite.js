@@ -121,7 +121,8 @@ function main(config) {
     const regionGroups = [
       { key: "US", name: "🇺🇸 US", filter: /(?:^|[\s_\-()[\]])US(?:$|[\s_\-()[\]])|USA|United[ _-]?States|美国|美國|🇺🇸/i },
       { key: "JP", name: "🇯🇵 JP", filter: /(?:^|[\s_\-()[\]])JP(?:$|[\s_\-()[\]])|Japan|日本|东京|大阪|🇯🇵/i },
-      { key: "SG", name: "🇸🇬 SG", filter: /(?:^|[\s_\-()[\]])SG(?:$|[\s_\-()[\]])|Singapore|新加坡|狮城|🇸🇬/i }
+      { key: "SG", name: "🇸🇬 SG", filter: /(?:^|[\s_\-()[\]])SG(?:$|[\s_\-()[\]])|Singapore|新加坡|狮城|🇸🇬/i },
+      { key: "HK", name: "🇭🇰 HK", filter: /(?:^|[\s_\-()[\]])HK(?:$|[\s_\-()[\]])|Hong[ _-]?Kong|香港|港島|🇭🇰/i }
     ];
 
     const regionalNodes = {};
@@ -155,6 +156,7 @@ function main(config) {
       US: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/United_States.png",
       JP: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Japan.png",
       SG: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Singapore.png",
+      HK: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Hong_Kong.png",
       AI: "https://raw.githubusercontent.com/laiquziru/share/refs/heads/main/chatgpt.png",
       TG: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Telegram.png"
     };
@@ -189,7 +191,7 @@ function main(config) {
     }, healthCheck));
 
     // 地区自动测速组
-    ["US", "JP", "SG"].forEach(key => {
+    ["US", "JP", "SG", "HK"].forEach(key => {
       const matched = regionalNodes[key];
       if (!matched) return;
       fixed["proxy-groups"].push(Object.assign({
@@ -212,6 +214,9 @@ function main(config) {
     }
     if (regionalNodes.JP) {
       aiFallbackProxies.push(autoByKey.JP);
+    }
+    if (regionalNodes.HK) {
+      aiFallbackProxies.push(autoByKey.HK);
     }
 
     // 保留原有全局备用路径，但 AUTO 不保证选择 AI 支持的地区。
