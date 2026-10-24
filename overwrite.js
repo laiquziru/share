@@ -15,12 +15,14 @@
 const RUNESTONE = { repository: "Sydney-Moses/Network-Profiles" };
 
 // 自定义规则集：指向 share 仓库的 direct.list / proxy.list，编辑 list 无需改动本脚本。
+// URL 走 jsdelivr 国内可达镜像（@main 有分钟级缓存延迟）；raw.githubusercontent.com 备用。
+const RULESET_BASE = "https://fastly.jsdelivr.net/gh/laiquziru/share@main/";
 const customRuleProviders = {
   direct: {
     type: "http",
     behavior: "classical",
     format: "text",
-    url: "https://raw.githubusercontent.com/laiquziru/share/main/direct.list",
+    url: RULESET_BASE + "direct.list",
     path: "./ruleset/direct.list",
     interval: 86400
   },
@@ -28,7 +30,7 @@ const customRuleProviders = {
     type: "http",
     behavior: "classical",
     format: "text",
-    url: "https://raw.githubusercontent.com/laiquziru/share/main/proxy.list",
+    url: RULESET_BASE + "proxy.list",
     path: "./ruleset/proxy.list",
     interval: 86400
   }
@@ -374,6 +376,8 @@ function main(config) {
       "MATCH,🐟 漏网之鱼"
     ];
 
+    // 去重仅保留每条规则首次出现的位置；规则自上而下匹配，新增规则时
+    // 更具体的条目必须放在更宽泛的条目之前，否则永远不会命中。
     fixed.rules = [...new Set(fixed.rules)];
 
     return fixed;
