@@ -1,0 +1,7 @@
+#!name=laiquziru 自定义分流
+#!desc=share 仓库维护的个人域名分流规则
+
+[Rule]
+DOMAIN-SUFFIX,241231.xyz,PROXY
+DOMAIN-SUFFIX,nofx.one,DIRECT
+IP-CIDR,124.70.131.253/32,DIRECT,no-resolve
