@@ -1,7 +1,105 @@
-#!name= 🅻🅀🅉🆁
-#!desc= 🅻🅀🅉🆁 个人仓库
+#!name=🅻🅀🅉🆁 综合增强
+#!desc=lqzr 自用：AI/流媒体分流 + 去广告重写 + 实用脚本（配套 share 仓库 direct.list/proxy.list）
+#!category=lqzr
+
+[General]
+# 规则命中这些进程时不走代理（按需增删）
+# skip-proxy = 192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12, localhost, *.local
 
 [Rule]
+# ---- 自定义（与 share 仓库两个 list 保持一致）----
 DOMAIN-SUFFIX,241231.xyz,PROXY
 DOMAIN-SUFFIX,nofx.one,DIRECT
 IP-CIDR,124.70.131.253/32,DIRECT,no-resolve
+
+# ---- 国外 AI 服务走代理（配合你已有节点）----
+DOMAIN-SUFFIX,openai.com,PROXY
+DOMAIN-SUFFIX,chatgpt.com,PROXY
+DOMAIN-SUFFIX,oaistatic.com,PROXY
+DOMAIN-SUFFIX,oaiusercontent.com,PROXY
+DOMAIN-SUFFIX,anthropic.com,PROXY
+DOMAIN-SUFFIX,claude.ai,PROXY
+DOMAIN-SUFFIX,gemini.google.com,PROXY
+DOMAIN-SUFFIX,generativelanguage.googleapis.com,PROXY
+DOMAIN-SUFFIX,bard.google.com,PROXY
+DOMAIN-SUFFIX,copilot.microsoft.com,PROXY
+DOMAIN-SUFFIX,perplexity.ai,PROXY
+DOMAIN-SUFFIX,grok.com,PROXY
+DOMAIN-SUFFIX,x.ai,PROXY
+
+# ---- Telegram ----
+DOMAIN-SUFFIX,telegram.org,PROXY
+DOMAIN-SUFFIX,t.me,PROXY
+DOMAIN-SUFFIX,tdesktop.com,PROXY
+DOMAIN-SUFFIX,telesco.pe,PROXY
+IP-CIDR,91.108.4.0/22,PROXY,no-resolve
+IP-CIDR,91.108.8.0/22,PROXY,no-resolve
+IP-CIDR,91.108.12.0/22,PROXY,no-resolve
+IP-CIDR,91.108.16.0/22,PROXY,no-resolve
+IP-CIDR,91.108.20.0/22,PROXY,no-resolve
+IP-CIDR,149.154.160.0/20,PROXY,no-resolve
+
+# ---- GitHub 开发相关 ----
+DOMAIN-SUFFIX,github.com,PROXY
+DOMAIN-SUFFIX,github.io,PROXY
+DOMAIN-SUFFIX,githubusercontent.com,PROXY
+DOMAIN-SUFFIX,githubassets.com,PROXY
+DOMAIN-SUFFIX,ghcr.io,PROXY
+
+# ---- 流媒体 ----
+DOMAIN-SUFFIX,netflix.com,PROXY
+DOMAIN-SUFFIX,nflxvideo.net,PROXY
+DOMAIN-SUFFIX,nflximg.net,PROXY
+DOMAIN-SUFFIX,youtube.com,PROXY
+DOMAIN-SUFFIX,googlevideo.com,PROXY
+DOMAIN-SUFFIX,ytimg.com,PROXY
+DOMAIN-SUFFIX,spotify.com,PROXY
+DOMAIN-SUFFIX,scdn.co,PROXY
+DOMAIN-SUFFIX,tiktokv.com,PROXY
+DOMAIN-SUFFIX,tiktokcdn.com,PROXY
+DOMAIN-SUFFIX,x.com,PROXY
+DOMAIN-SUFFIX,twimg.com,PROXY
+DOMAIN-SUFFIX,instagram.com,PROXY
+DOMAIN-SUFFIX,cdninstagram.com,PROXY
+
+# ---- 广告拦截（常见广告/追踪域名）----
+DOMAIN-SUFFIX,adnxs.com,REJECT
+DOMAIN-SUFFIX,adsrvr.org,REJECT
+DOMAIN-SUFFIX,doubleclick.net,REJECT
+DOMAIN-SUFFIX,googleadservices.com,REJECT
+DOMAIN-SUFFIX,googlesyndication.com,REJECT
+DOMAIN-SUFFIX,googletagmanager.com,REJECT
+DOMAIN-SUFFIX,google-analytics.com,REJECT
+DOMAIN-SUFFIX,analytics.tiktok.com,REJECT
+DOMAIN-SUFFIX,applovin.com,REJECT
+DOMAIN-SUFFIX,unityads.unity3d.com,REJECT
+DOMAIN-KEYWORD,adservice,REJECT
+DOMAIN-KEYWORD,tracking,REJECT
+
+# ---- 隐私：阻止常见埋点/统计 ----
+DOMAIN-SUFFIX,app-measurement.com,REJECT
+DOMAIN-SUFFIX,crashlytics.com,REJECT
+DOMAIN-SUFFIX,firebase-settings.crashlytics.com,REJECT
+DOMAIN-SUFFIX,sensors.com,REJECT
+DOMAIN-SUFFIX,shuzilm.cn,REJECT
+DOMAIN-SUFFIX,growingio.com,REJECT
+DOMAIN-SUFFIX,aldwx.com,REJECT
+
+# ---- 国内直连兜底（放在国外规则之后）----
+GEOIP,CN,DIRECT
+
+[URL Rewrite]
+# ---- 去广告重写 ----
+# 360 手机卫士开屏广告
+^https?:\/\/int\.360\.com\/resource\/m\.html url reject
+# 喜马拉雅开屏广告
+^https?:\/\/.+\.ximalaya\.com\/.+\/advert\/ url reject
+# 百度系开屏广告
+^https?:\/\/issuecdn\.baidupcs\.com\/issue\/netdisk\/guanggao url reject
+# 京东开屏广告
+^https?:\/\/api\.m\.jd\.com\/client\.action\?functionId=start url reject-img
+# 哔哩哔哩开屏广告（如失效可删）
+^https?:\/\/app\.bilibili\.com\/x\/v2\/splash\/(list|show) url reject
+
+[MITM]
+hostname = api.m.jd.com, app.bilibili.com, int.360.com, issuecdn.baidupcs.com
