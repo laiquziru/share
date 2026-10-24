@@ -1,5 +1,5 @@
-#!name=🅻🅀🅉🆁
-#!desc=share 仓库维护的个人域名分流规则
+#!name= 🅻🅀🅉🆁
+#!desc= 🅻🅀🅉🆁 个人仓库
 
 [Rule]
 DOMAIN-SUFFIX,241231.xyz,PROXY
