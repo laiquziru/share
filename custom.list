@@ -1,5 +1,0 @@
-# 自定义分流清单（Shadowrocket RULE-SET 格式：每行自带目标）
-# 加新条目直接在下面加一行，改完提交后在小火箭里更新模块/规则集即可
-DOMAIN-SUFFIX,241231.xyz,PROXY
-DOMAIN-SUFFIX,nofx.one,DIRECT
-IP-CIDR,124.70.131.253/32,DIRECT,no-resolve
