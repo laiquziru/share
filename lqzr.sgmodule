@@ -86,7 +86,6 @@ DOMAIN-SUFFIX,growingio.com,REJECT
 DOMAIN-SUFFIX,aldwx.com,REJECT
 
 # ---- 国内直连兜底（放在国外规则之后）----
-GEOIP,CN,DIRECT
 
 [URL Rewrite]
 # ---- 去广告重写 ----
