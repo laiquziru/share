@@ -39,12 +39,21 @@ IP-CIDR,91.108.16.0/22,PROXY,no-resolve
 IP-CIDR,91.108.20.0/22,PROXY,no-resolve
 IP-CIDR,149.154.160.0/20,PROXY,no-resolve
 
-# ---- GitHub 开发相关 ----
+# ---- GitHub 开发相关（含加速镜像站直连）----
 DOMAIN-SUFFIX,github.com,PROXY
 DOMAIN-SUFFIX,github.io,PROXY
 DOMAIN-SUFFIX,githubusercontent.com,PROXY
 DOMAIN-SUFFIX,githubassets.com,PROXY
+DOMAIN-SUFFIX,githubcdn.com,PROXY
 DOMAIN-SUFFIX,ghcr.io,PROXY
+DOMAIN-SUFFIX,github.dev,PROXY
+DOMAIN-SUFFIX,codeload.github.com,PROXY
+# GitHub 加速镜像站走直连（国内直连即满速）
+DOMAIN-SUFFIX,gh-proxy.com,DIRECT
+DOMAIN-SUFFIX,ghproxy.net,DIRECT
+DOMAIN-SUFFIX,mirror.ghproxy.com,DIRECT
+DOMAIN-SUFFIX,gitclone.com,DIRECT
+DOMAIN-SUFFIX,ghfast.top,DIRECT
 
 # ---- 流媒体 ----
 DOMAIN-SUFFIX,netflix.com,PROXY
@@ -86,8 +95,14 @@ DOMAIN-SUFFIX,growingio.com,REJECT
 DOMAIN-SUFFIX,aldwx.com,REJECT
 
 # ---- 国内直连兜底（放在国外规则之后）----
+GEOIP,CN,DIRECT
 
 [URL Rewrite]
+# ---- GitHub 加速：Release/归档/raw 下载重写到镜像（无代理也满速）----
+^https?:\/\/github\.com\/([^\/]+)\/([^\/]+)\/releases\/download\/(.+) url 302 https://gh-proxy.com/https://github.com/$1/$2/releases/download/$3
+^https?:\/\/github\.com\/([^\/]+)\/([^\/]+)\/archive\/(.+\.(zip|tar\.gz)) url 302 https://gh-proxy.com/https://github.com/$1/$2/archive/$3
+^https?:\/\/raw\.githubusercontent\.com\/(.+) url 302 https://gh-proxy.com/https://raw.githubusercontent.com/$1
+
 # ---- 去广告重写 ----
 # 360 手机卫士开屏广告
 ^https?:\/\/int\.360\.com\/resource\/m\.html url reject
@@ -101,4 +116,4 @@ DOMAIN-SUFFIX,aldwx.com,REJECT
 ^https?:\/\/app\.bilibili\.com\/x\/v2\/splash\/(list|show) url reject
 
 [MITM]
-hostname = api.m.jd.com, app.bilibili.com, int.360.com, issuecdn.baidupcs.com
+hostname = github.com, raw.githubusercontent.com, api.m.jd.com, app.bilibili.com, int.360.com, issuecdn.baidupcs.com
