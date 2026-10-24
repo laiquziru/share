@@ -8,7 +8,7 @@
 
 [Rule]
 # ---- 自定义（与 share 仓库两个 list 保持一致）----
-DOMAIN-SUFFIX,241231.xyz,PROXY
+DOMAIN-SUFFIX,241231.xyz,DIRECT
 DOMAIN-SUFFIX,nofx.one,DIRECT
 IP-CIDR,124.70.131.253/32,DIRECT,no-resolve
 
