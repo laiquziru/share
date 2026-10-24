@@ -1,8 +1,7 @@
 /*
  * 配置说明 (2026-10-15):
  * 1. 使用 rule 模式、fake-ip、geodata-mode 和 lazy 测速。
- * 2. 使用 GEOSITE 与 GEOIP 数据分类；自定义 direct.list / proxy.list 规则集
- *    指向本仓库（laiquziru/share），置于广告规则之前。
+ * 2. 使用 GEOSITE 与 GEOIP 数据分类，不使用外部 Rule-Set；仍需本地 geodata 包含所用分类。
  * 3. GFW、Instagram、Google、GitHub、X、YouTube、Netflix、Spotify、TikTok
  *    以及非中国学术站点走 PROXY；国外 AI 服务走 AI 连通性故障转移组。
  * 4. Telegram 域名与 IP 交由「📱 Telegram」组选择 DIRECT 或 PROXY，首次默认 DIRECT。
@@ -13,28 +12,6 @@
  */
 
 const RUNESTONE = { repository: "Sydney-Moses/Network-Profiles" };
-
-// 自定义规则集：指向 share 仓库的 direct.list / proxy.list，编辑 list 无需改动本脚本。
-// URL 走 jsdelivr 国内可达镜像（@main 有分钟级缓存延迟）；raw.githubusercontent.com 备用。
-const RULESET_BASE = "https://fastly.jsdelivr.net/gh/laiquziru/share@main/";
-const customRuleProviders = {
-  direct: {
-    type: "http",
-    behavior: "classical",
-    format: "text",
-    url: RULESET_BASE + "direct.list",
-    path: "./ruleset/direct.list",
-    interval: 86400
-  },
-  proxy: {
-    type: "http",
-    behavior: "classical",
-    format: "text",
-    url: RULESET_BASE + "proxy.list",
-    path: "./ruleset/proxy.list",
-    interval: 86400
-  }
-};
 
 function main(config) {
   try {
@@ -75,8 +52,8 @@ function main(config) {
 
     fixed.proxies = currentProxies;
     fixed["proxy-groups"] = [];
-    // 路由与 DNS 策略均由本脚本重建；仅保留指向自有 share 仓库的自定义规则集。
-    fixed["rule-providers"] = customRuleProviders;
+    // 路由与 DNS 策略均由本脚本重建，不再保留旧规则集和子规则定义。
+    delete fixed["rule-providers"];
     delete fixed["sub-rules"];
 
     const aiGeosite = "category-ai-!cn";
@@ -338,16 +315,12 @@ function main(config) {
     });
 
     // ------------------------------------------------------------
-    // 5. 分流规则 (内置 GEOSITE/GEOIP + share 仓库自定义规则集)
+    // 5. 分流规则 (纯内置 GEOSITE 与 GEOIP，零外部规则集依赖)
     // ------------------------------------------------------------
     fixed.rules = [
       // 1. 局域网与私有域名/IP 直连
       "GEOSITE,private,DIRECT",
       "GEOIP,private,DIRECT,no-resolve",
-
-      // 1.5 自定义规则集（share 仓库 direct.list / proxy.list），置于广告规则之前
-      "RULE-SET,direct,DIRECT",
-      "RULE-SET,proxy,PROXY",
 
       // 2. 广告域名拦截前置
       "GEOSITE,category-ads-all,REJECT",
