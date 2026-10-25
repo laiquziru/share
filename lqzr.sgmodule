@@ -7,9 +7,6 @@
 # skip-proxy = 192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12, localhost, *.local
 
 [Rule]
-# ---- 自定义分流（引用 share 仓库 custom.list，加域名改那个文件即可）----
-RULE-SET,https://gh-proxy.com/https://raw.githubusercontent.com/laiquziru/share/main/custom.list
-
 # ---- 国外 AI 服务走代理（配合你已有节点）----
 DOMAIN-SUFFIX,openai.com,PROXY
 DOMAIN-SUFFIX,chatgpt.com,PROXY
@@ -92,11 +89,19 @@ DOMAIN-SUFFIX,shuzilm.cn,REJECT
 DOMAIN-SUFFIX,growingio.com,REJECT
 DOMAIN-SUFFIX,aldwx.com,REJECT
 
+# ---- 国内直连兜底（放在国外规则之后）----
+GEOIP,CN,DIRECT
+
 [URL Rewrite]
 # ---- GitHub 加速：Release/归档/raw 下载重写到镜像（无代理也满速）----
+# Release 附件下载
 ^https?:\/\/github\.com\/([^\/]+)\/([^\/]+)\/releases\/download\/(.+) url 302 https://gh-proxy.com/https://github.com/$1/$2/releases/download/$3
+# 源码归档 zip/tar.gz
 ^https?:\/\/github\.com\/([^\/]+)\/([^\/]+)\/archive\/(.+\.(zip|tar\.gz)) url 302 https://gh-proxy.com/https://github.com/$1/$2/archive/$3
-^https?:\/\/raw\.githubusercontent\.com\/(.+) url 302 https://gh-proxy.com/https://raw.githubusercontent.com/$1
+# raw 完整格式（带 refs/heads/，须在短格式之前匹配）
+^https?:\/\/raw\.githubusercontent\.com\/([^\/]+)\/([^\/]+)\/refs\/heads\/([^\/]+)\/(.+) url 302 https://gh-proxy.com/https://raw.githubusercontent.com/$1/$2/refs/heads/$3/$4
+# raw 短格式（默认路径，分支名在前）
+^https?:\/\/raw\.githubusercontent\.com\/([^\/]+)\/([^\/]+)\/([^\/]+)\/(.+) url 302 https://gh-proxy.com/https://raw.githubusercontent.com/$1/$2/$3/$4
 
 # ---- 去广告重写 ----
 # 360 手机卫士开屏广告
