@@ -1,15 +1,15 @@
 /*
- * 配置说明 (2026-10-15):
+ * 配置说明 (2026-10-25 优化版):
  * 1. 使用 rule 模式、fake-ip、geodata-mode 和 lazy 测速。
  * 2. 使用 GEOSITE 与 GEOIP 数据分类；自定义 direct.list / proxy.list 规则集
- *    指向本仓库（laiquziru/share），置于广告规则之前。
+ *    指向本仓库（laiquziru/share），置于广告规则之前（direct 优先于 proxy）。
  * 3. GFW、Instagram、Google、GitHub、X、YouTube、Netflix、Spotify、TikTok
- *    以及非中国学术站点走 PROXY；国外 AI 服务走 AI 连通性故障转移组。
+ *    以及非中国学术站点走 PROXY；国外 AI 服务走 AI 连通性故障转移组（排除 HK）。
  * 4. Telegram 域名与 IP 交由「📱 Telegram」组选择 DIRECT 或 PROXY，首次默认 DIRECT。
- * 5. 广告规则前置 REJECT；局域网和私有地址使用 GEOSITE/GEOIP private 直连。
+ * 5. 广告与国内 HTTPDNS 规则前置 REJECT；局域网和私有地址使用 GEOSITE/GEOIP private 直连。
  * 6. 国内流量通过 GEOSITE/GEOIP cn 保底直连；「🐟 漏网之鱼」首次默认 DIRECT，之后记忆选择。
- * 7. 代理类域名需要真实解析时使用 #PROXY 远端 DoH；私有域名使用系统 DNS。
- * 8. DNS 引导及系统 DNS 不保证加密；应用 DNS 接管需另行配置。AI 测速不验证服务解锁。
+ * 7. 代理类域名（含 proxy.list）需要真实解析时使用 #PROXY 远端 DoH；私有域名使用系统 DNS。
+ * 8. 自动测速组过滤掉信息提示类节点与高倍率节点，避免断网或流量异常消耗。
  */
 
 const RUNESTONE = { repository: "Sydney-Moses/Network-Profiles" };
@@ -94,10 +94,12 @@ function main(config) {
     ];
     const nameserverPolicy = {
       "geosite:private": ["system"],
+      "rule-set:direct": domesticDns.slice(),
+      "rule-set:proxy": remoteDns.slice(),
       ["geosite:" + aiGeosite]: remoteDns.slice(),
-       // Telegram DNS uses remote DoH to avoid local pollution. Traffic remains
-       // selectable through the Telegram policy group below.
-       "geosite:telegram": remoteDns.slice()
+      // Telegram DNS uses remote DoH to avoid local pollution. Traffic remains
+      // selectable through the Telegram policy group below.
+      "geosite:telegram": remoteDns.slice()
     };
     // 与业务规则共用分类，避免新增代理服务却遗漏 DNS 分流。
     proxyGeosites.forEach(site => {
@@ -138,20 +140,27 @@ function main(config) {
     delete fixed.dns["proxy-server-nameserver-policy"];
 
     // ------------------------------------------------------------
-    // 2. 地区识别
+    // 2. 地区识别与无效/高倍率节点过滤
     // ------------------------------------------------------------
+    // 过滤账单提示节点及大于等于 2 倍率的节点，避免混入 Auto 自动测速池
+    const excludeFilter = /剩余|流量|到期|官网|群组|重置|套餐|过期|失联|测试|倍率|[2-9]\.?[0-9]*x|[1-9][0-9]+\.?[0-9]*x/i;
+    const validProxyNames = currentProxyNames.filter(name => !excludeFilter.test(name));
+    // 若极端情况下全部被过滤，则回退使用全部节点
+    const basePoolForAuto = validProxyNames.length > 0 ? validProxyNames : currentProxyNames;
+
     const regionGroups = [
-      { key: "US", name: "🇺🇸 US", filter: /(?:^|[\s_\-()[\]])US(?:$|[\s_\-()[\]])|USA|United[ _-]?States|美国|美國|🇺🇸/i },
-      { key: "JP", name: "🇯🇵 JP", filter: /(?:^|[\s_\-()[\]])JP(?:$|[\s_\-()[\]])|Japan|日本|东京|大阪|🇯🇵/i },
-      { key: "SG", name: "🇸🇬 SG", filter: /(?:^|[\s_\-()[\]])SG(?:$|[\s_\-()[\]])|Singapore|新加坡|狮城|🇸🇬/i },
-      { key: "HK", name: "🇭🇰 HK", filter: /(?:^|[\s_\-()[\]])HK(?:$|[\s_\-()[\]])|Hong[ _-]?Kong|香港|港島|🇭🇰/i }
+      { key: "US", name: "🇺🇸 US", filter: /(?:^|[\s_\-()[\]])(US|USA|SJC|LAX|SEA)(?:$|[\s_\-()[\]])|United[ _-]?States|America|美国|美國|洛杉矶|硅谷|西雅图|圣何塞|芝加哥|达拉斯|🇺🇸/i },
+      { key: "JP", name: "🇯🇵 JP", filter: /(?:^|[\s_\-()[\]])(JP|JPN|NRT|KIX)(?:$|[\s_\-()[\]])|Japan|Tokyo|Osaka|日本|东京|大阪|名古屋|埼玉|🇯🇵/i },
+      { key: "SG", name: "🇸🇬 SG", filter: /(?:^|[\s_\-()[\]])(SG|SGP|SIN)(?:$|[\s_\-()[\]])|Singapore|新加坡|狮城|🇸🇬/i },
+      { key: "HK", name: "🇭🇰 HK", filter: /(?:^|[\s_\-()[\]])(HK|HKG)(?:$|[\s_\-()[\]])|Hong[ _-]?Kong|香港|港島|九龙|新界|深港|沪港|广港|🇭🇰/i }
     ];
 
     const regionalNodes = {};
     const regionalAutos = [];
 
     regionGroups.forEach(region => {
-      const matched = currentProxyNames.filter(name => region.filter.test(name));
+      // 地区 Auto 组仅从有效测速池中筛选
+      const matched = basePoolForAuto.filter(name => region.filter.test(name));
       if (matched.length === 0) return;
       regionalNodes[region.key] = matched;
       regionalAutos.push({ key: region.key, name: region.name + "-Auto", nodes: matched });
@@ -163,10 +172,10 @@ function main(config) {
 
     const allRegionalNodes = [];
     regionalAutos.forEach(a => a.nodes.forEach(n => { if (!allRegionalNodes.includes(n)) allRegionalNodes.push(n); }));
-    const unmatchedNodes = currentProxyNames.filter(n => !allRegionalNodes.includes(n));
+    const unmatchedNodes = basePoolForAuto.filter(n => !allRegionalNodes.includes(n));
     const autoPool = allRegionalNodes.length
       ? [...allRegionalNodes, ...unmatchedNodes]
-      : currentProxyNames.slice();
+      : basePoolForAuto.slice();
 
     // ------------------------------------------------------------
     // 3. 策略组 (包含 AI Fallback、漏网之鱼 与省电优化)
@@ -195,7 +204,7 @@ function main(config) {
       lazy: true
     };
 
-    // 主代理选择组：保持 PROXY 里内部顺序为 AUTO -> 🇭🇰 HK -> HK-Auto -> 其余 Auto -> 节点
+    // 主代理选择组：保持 PROXY 里内部顺序为 AUTO -> 🇭🇰 HK -> HK-Auto -> 其余 Auto -> 全部原始节点
     const proxyTargets = ["AUTO"];
     if (regionalNodes.HK) {
       proxyTargets.push("🇭🇰 HK");
@@ -228,22 +237,24 @@ function main(config) {
       proxies: autoPool.slice()
     }, healthCheck));
 
-    // 外层顺序：AUTO -> 🇭🇰 HK -> HK-Auto -> 其它 Auto（仅保留 HK）
-    fixed["proxy-groups"].push({
-      name: "🇭🇰 HK",
-      type: "select",
-      icon: groupIcon.HK,
-      proxies: ["DIRECT", ...(autoByKey.HK ? [autoByKey.HK] : []), ...(regionalNodes.HK ? regionalNodes.HK.slice() : [])].filter(Boolean)
-    });
-
-    if (autoByKey.HK) {
-      fixed["proxy-groups"].push(Object.assign({
-        name: autoByKey.HK,
-        type: "url-test",
+    // 外层顺序：AUTO -> 🇭🇰 HK -> HK-Auto -> 其它 Auto（仅在存在香港节点时生成）
+    if (regionalNodes.HK) {
+      fixed["proxy-groups"].push({
+        name: "🇭🇰 HK",
+        type: "select",
         icon: groupIcon.HK,
-        tolerance: 50,
-        proxies: regionalNodes.HK.slice()
-      }, healthCheck));
+        proxies: ["DIRECT", ...(autoByKey.HK ? [autoByKey.HK] : []), ...regionalNodes.HK.slice()].filter(Boolean)
+      });
+
+      if (autoByKey.HK) {
+        fixed["proxy-groups"].push(Object.assign({
+          name: autoByKey.HK,
+          type: "url-test",
+          icon: groupIcon.HK,
+          tolerance: 50,
+          proxies: regionalNodes.HK.slice()
+        }, healthCheck));
+      }
     }
 
     // 只保留 HK 相关手动/自动组；US/JP/SG 不再额外创建手动组
@@ -259,20 +270,16 @@ function main(config) {
       }, healthCheck));
     });
 
-    // 仅检测 HTTPS 连通性，不验证 AI 地区/IP 限制；顺序为 US -> SG -> JP -> AUTO。
+    // 仅检测 HTTPS 连通性，顺序为 US -> SG -> JP -> AUTO（排除 HK 避免触发 AI 地区封锁）。
     const aiFallbackProxies = [];
     if (regionalNodes.US) {
       aiFallbackProxies.push(autoByKey.US);
     }
-
     if (regionalNodes.SG) {
       aiFallbackProxies.push(autoByKey.SG);
     }
     if (regionalNodes.JP) {
       aiFallbackProxies.push(autoByKey.JP);
-    }
-    if (regionalNodes.HK) {
-      aiFallbackProxies.push(autoByKey.HK);
     }
 
     // 保留原有全局备用路径，但 AUTO 不保证选择 AI 支持的地区。
@@ -344,18 +351,18 @@ function main(config) {
       "GEOSITE,private,DIRECT",
       "GEOIP,private,DIRECT,no-resolve",
 
-      // 1.5 自定义规则集（share 仓库 proxy.list / direct.list），置于广告规则之前
-      "RULE-SET,proxy,PROXY",
+      // 1.5 自定义规则集（direct 优先于 proxy，置于广告拦截之前以便处理误杀）
       "RULE-SET,direct,DIRECT",
+      "RULE-SET,proxy,PROXY",
 
-      // 2. 广告域名拦截前置
+      // 2. 广告域名与国内应用内置 HTTPDNS 拦截前置
       "GEOSITE,category-ads-all,REJECT",
+      "GEOSITE,category-httpdns-cn,REJECT",
 
       // 3. 国外 AI -> 连通性 Fallback 组
       "GEOSITE," + aiGeosite + ",🤖 AI",
 
       // 4. Telegram 域名与数据中心 IP -> 独立手动选择组
-      // 客户端自带代理服务器的连接仍按本配置分流，不保证避免代理套代理。
       "GEOSITE,telegram," + telegramGroupName,
       "GEOIP,telegram," + telegramGroupName + ",no-resolve",
 
@@ -367,16 +374,15 @@ function main(config) {
       "GEOIP,netflix,PROXY,no-resolve",
       "GEOIP,twitter,PROXY,no-resolve",
 
-      // 7. 未分类域名不主动解析，减少国内 DNS 暴露；GEOSITE,cn 覆盖国内域名。
+      // 7. 国内域名与 IP 保底直连（移除 GEOIP,cn 的 no-resolve，确保未收录的国内冷门域名能通过解析 IP 精准直连）
       "GEOSITE,cn,DIRECT",
-      "GEOIP,cn,DIRECT,no-resolve",
+      "GEOIP,cn,DIRECT",
 
       // 8. 最终未匹配流量 -> 交由「🐟 漏网之鱼」策略组决定 (默认 DIRECT)
       "MATCH,🐟 漏网之鱼"
     ];
 
-    // 去重仅保留每条规则首次出现的位置；规则自上而下匹配，新增规则时
-    // 更具体的条目必须放在更宽泛的条目之前，否则永远不会命中。
+    // 去重仅保留每条规则首次出现的位置
     fixed.rules = [...new Set(fixed.rules)];
 
     return fixed;
