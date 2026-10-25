@@ -1,0 +1,12 @@
+# 自定义直连清单（走 DIRECT）。常用写法：
+#   DOMAIN-SUFFIX,example.com            域名及其所有子域名（最常用）
+#   DOMAIN,api.example.com               仅这一个完整域名，不含子域名
+#   DOMAIN-KEYWORD,example               域名含关键字（宽泛，慎用）
+#   IP-CIDR,1.2.3.4/32,no-resolve        单个 IP
+#   IP-CIDR,192.168.10.0/24,no-resolve   整个网段
+#   IP-CIDR6,2001:db8::/32,no-resolve    IPv6
+# 排除某子域名可用逻辑规则，如：
+#   AND,((DOMAIN-SUFFIX,example.com),(NOT,((DOMAIN,api.example.com))))
+# DOMAIN-SUFFIX,nofx.one
+# IP-CIDR,124.70.131.253/32,no-resolve
+
