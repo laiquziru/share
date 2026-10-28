@@ -8,86 +8,18 @@
 
 [Rule]
 # ---- 国外 AI 服务走代理（配合你已有节点）----
-DOMAIN-SUFFIX,openai.com,PROXY
-DOMAIN-SUFFIX,chatgpt.com,PROXY
-DOMAIN-SUFFIX,oaistatic.com,PROXY
-DOMAIN-SUFFIX,oaiusercontent.com,PROXY
-DOMAIN-SUFFIX,anthropic.com,PROXY
-DOMAIN-SUFFIX,claude.ai,PROXY
-DOMAIN-SUFFIX,gemini.google.com,PROXY
-DOMAIN-SUFFIX,generativelanguage.googleapis.com,PROXY
-DOMAIN-SUFFIX,bard.google.com,PROXY
-DOMAIN-SUFFIX,copilot.microsoft.com,PROXY
-DOMAIN-SUFFIX,perplexity.ai,PROXY
-DOMAIN-SUFFIX,grok.com,PROXY
-DOMAIN-SUFFIX,x.ai,PROXY
 
-# ---- Telegram ----
-DOMAIN-SUFFIX,telegram.org,PROXY
-DOMAIN-SUFFIX,t.me,PROXY
-DOMAIN-SUFFIX,tdesktop.com,PROXY
-DOMAIN-SUFFIX,telesco.pe,PROXY
-IP-CIDR,91.108.4.0/22,PROXY,no-resolve
-IP-CIDR,91.108.8.0/22,PROXY,no-resolve
-IP-CIDR,91.108.12.0/22,PROXY,no-resolve
-IP-CIDR,91.108.16.0/22,PROXY,no-resolve
-IP-CIDR,91.108.20.0/22,PROXY,no-resolve
-IP-CIDR,149.154.160.0/20,PROXY,no-resolve
+
+
 
 # ---- GitHub 走代理（Release/raw/归档下载域名全覆盖）----
-DOMAIN-SUFFIX,github.com,PROXY
-DOMAIN-SUFFIX,github.io,PROXY
-DOMAIN-SUFFIX,githubusercontent.com,PROXY
-DOMAIN-SUFFIX,githubassets.com,PROXY
-DOMAIN-SUFFIX,githubcdn.com,PROXY
-DOMAIN-SUFFIX,ghcr.io,PROXY
-DOMAIN-SUFFIX,github.dev,PROXY
-DOMAIN-SUFFIX,codeload.github.com,PROXY
-# GitHub 加速镜像站走直连（国内直连即满速）
-DOMAIN-SUFFIX,gh-proxy.com,DIRECT
-DOMAIN-SUFFIX,ghproxy.net,DIRECT
-DOMAIN-SUFFIX,mirror.ghproxy.com,DIRECT
-DOMAIN-SUFFIX,gitclone.com,DIRECT
-DOMAIN-SUFFIX,ghfast.top,DIRECT
 
-# ---- 流媒体 ----
-DOMAIN-SUFFIX,netflix.com,PROXY
-DOMAIN-SUFFIX,nflxvideo.net,PROXY
-DOMAIN-SUFFIX,nflximg.net,PROXY
-DOMAIN-SUFFIX,youtube.com,PROXY
-DOMAIN-SUFFIX,googlevideo.com,PROXY
-DOMAIN-SUFFIX,ytimg.com,PROXY
-DOMAIN-SUFFIX,spotify.com,PROXY
-DOMAIN-SUFFIX,scdn.co,PROXY
-DOMAIN-SUFFIX,tiktokv.com,PROXY
-DOMAIN-SUFFIX,tiktokcdn.com,PROXY
-DOMAIN-SUFFIX,x.com,PROXY
-DOMAIN-SUFFIX,twimg.com,PROXY
-DOMAIN-SUFFIX,instagram.com,PROXY
-DOMAIN-SUFFIX,cdninstagram.com,PROXY
 
 # ---- 广告拦截（常见广告/追踪域名）----
-DOMAIN-SUFFIX,adnxs.com,REJECT
-DOMAIN-SUFFIX,adsrvr.org,REJECT
-DOMAIN-SUFFIX,doubleclick.net,REJECT
-DOMAIN-SUFFIX,googleadservices.com,REJECT
-DOMAIN-SUFFIX,googlesyndication.com,REJECT
-DOMAIN-SUFFIX,googletagmanager.com,REJECT
-DOMAIN-SUFFIX,google-analytics.com,REJECT
-DOMAIN-SUFFIX,analytics.tiktok.com,REJECT
-DOMAIN-SUFFIX,applovin.com,REJECT
-DOMAIN-SUFFIX,unityads.unity3d.com,REJECT
-DOMAIN-KEYWORD,adservice,REJECT
-DOMAIN-KEYWORD,tracking,REJECT
+
 
 # ---- 隐私：阻止常见埋点/统计 ----
-DOMAIN-SUFFIX,app-measurement.com,REJECT
-DOMAIN-SUFFIX,crashlytics.com,REJECT
-DOMAIN-SUFFIX,firebase-settings.crashlytics.com,REJECT
-DOMAIN-SUFFIX,sensors.com,REJECT
-DOMAIN-SUFFIX,shuzilm.cn,REJECT
-DOMAIN-SUFFIX,growingio.com,REJECT
-DOMAIN-SUFFIX,aldwx.com,REJECT
+
 
 
 
