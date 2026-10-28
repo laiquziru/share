@@ -8,7 +8,9 @@
 
 [Rule]
 # ---- 国外 AI 服务走代理（配合你已有节点）----
-
+DOMAIN,testflight.apple.com,DIRECT
+DOMAIN-SUFFIX,itunes.apple.com,DIRECT
+DOMAIN-SUFFIX,mzstatic.com,DIRECT
 
 
 
