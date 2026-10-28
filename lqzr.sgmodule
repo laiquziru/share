@@ -89,8 +89,7 @@ DOMAIN-SUFFIX,shuzilm.cn,REJECT
 DOMAIN-SUFFIX,growingio.com,REJECT
 DOMAIN-SUFFIX,aldwx.com,REJECT
 
-# ---- 国内直连兜底（放在国外规则之后）----
-GEOIP,CN,DIRECT
+
 
 [URL Rewrite]
 # 注：Clash Mi 当前不支持 url 302 重定向（模块详情会显示已跳过），
