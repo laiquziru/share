@@ -13,6 +13,10 @@ DOMAIN-SUFFIX,openbot.run
 IP-CIDR,124.70.131.253/32,no-resolve
 IP-CIDR,110.40.210.16/32,no-resolve
 
+# 国内镜像与 GitHub 加速入口
+DOMAIN-SUFFIX,hf-mirror.com
+DOMAIN-SUFFIX,gh-proxy.com
+
 # 中国大陆常用服务、CDN 与云服务
 DOMAIN-SUFFIX,10086.cn
 DOMAIN-SUFFIX,10jqka.com.cn

@@ -55,7 +55,6 @@ DOMAIN-SUFFIX,nousresearch.com
 DOMAIN-SUFFIX,exa.ai
 DOMAIN-SUFFIX,huggingface.co
 DOMAIN-SUFFIX,hf.co
-DOMAIN-SUFFIX,hf-mirror.com
 DOMAIN-SUFFIX,anyrouter.top
 DOMAIN-SUFFIX,models.dev
 DOMAIN-SUFFIX,t3.codes
@@ -87,6 +86,38 @@ DOMAIN-SUFFIX,licdn.com
 DOMAIN-SUFFIX,linux.do
 DOMAIN-SUFFIX,docomo.ne.jp
 DOMAIN-SUFFIX,jaist.ac.jp
+
+# 机场面板、订阅入口与发布页（书签栏：Util/GFW/机场）
+DOMAIN-SUFFIX,duyaoss.com
+DOMAIN-SUFFIX,ltss.pro
+DOMAIN,dy.emovip.top
+DOMAIN,pub.riolu.icu
+DOMAIN,o.riolu.ooo
+DOMAIN,panel.dg6.top
+DOMAIN-SUFFIX,hongxingdl.com
+DOMAIN-SUFFIX,glados.network
+DOMAIN-SUFFIX,xn--h5qy75o.com
+DOMAIN,j8doba2sodptvzprvmcb.wgetcloud.org
+DOMAIN-SUFFIX,yiy.one
+DOMAIN-SUFFIX,mitce.com
+DOMAIN-SUFFIX,cordc.net
+DOMAIN-SUFFIX,cacapex.com
+DOMAIN-SUFFIX,fengzg.net
+DOMAIN,lg.saibocloud.org
+DOMAIN-SUFFIX,azumase.ren
+DOMAIN-SUFFIX,xiaoniuyun.cc
+DOMAIN-SUFFIX,yujiasu.click
+DOMAIN-SUFFIX,cliproxy.com
+DOMAIN-SUFFIX,wuguijs.com
+DOMAIN,claudecode.tangshuang.net
+DOMAIN-SUFFIX,xn--mes358aby2apfg.com
+DOMAIN-SUFFIX,xn--9kqz23b19z.com
+DOMAIN,anywhere-hub.chikacya.indevs.in
+DOMAIN-SUFFIX,wuguijiasu.com
+DOMAIN,ctf2.dasctf.com
+DOMAIN-SUFFIX,kitty.fo
+DOMAIN-SUFFIX,fanq.club
+DOMAIN-SUFFIX,xn--9kqv4zdq7a.com
 
 # 境外 SaaS 与应用依赖
 DOMAIN-SUFFIX,intercom.com
