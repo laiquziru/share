@@ -140,3 +140,5 @@ DOMAIN-SUFFIX,privy.io
 DOMAIN-SUFFIX,walletconnect.com
 DOMAIN-SUFFIX,sentry.io
 DOMAIN-SUFFIX,wovn.io
+# 实测代理更快的中转服务
+DOMAIN-SUFFIX,paseo.sh
