@@ -93,6 +93,10 @@ DOMAIN-SUFFIX,linux.do
 DOMAIN-SUFFIX,docomo.ne.jp
 DOMAIN-SUFFIX,jaist.ac.jp
 
+DOMAIN-SUFFIX,gmail.com
+DOMAIN-SUFFIX,hls.itunes.apple.com
+DOMAIN-SUFFIX,promolayer.io
+DOMAIN-SUFFIX,testflight.apple.com
 # 机场面板、订阅入口与发布页（书签栏：Util/GFW/机场）
 DOMAIN-SUFFIX,duyaoss.com
 DOMAIN-SUFFIX,ltss.pro
