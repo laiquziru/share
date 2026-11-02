@@ -17,6 +17,7 @@ IP-CIDR,110.40.210.16/32,no-resolve
 DOMAIN-SUFFIX,hf-mirror.com
 DOMAIN-SUFFIX,gh-proxy.com
 
+DOMAIN-SUFFIX,alma.now
 # 中转/API 服务（直连）
 DOMAIN,relay.alma.now
 DOMAIN-SUFFIX,paseo.sh
