@@ -1,12 +1,105 @@
-# 自定义直连清单（走 DIRECT）。常用写法：
-#   DOMAIN-SUFFIX,example.com            域名及其所有子域名（最常用）
-#   DOMAIN,api.example.com               仅这一个完整域名，不含子域名
-#   DOMAIN-KEYWORD,example               域名含关键字（宽泛，慎用）
-#   IP-CIDR,1.2.3.4/32,no-resolve        单个 IP
-#   IP-CIDR,192.168.10.0/24,no-resolve   整个网段
-#   IP-CIDR6,2001:db8::/32,no-resolve    IPv6
-# 排除某子域名可用逻辑规则，如：
-#   AND,((DOMAIN-SUFFIX,example.com),(NOT,((DOMAIN,api.example.com))))
-# DOMAIN-SUFFIX,nofx.one
-# IP-CIDR,124.70.131.253/32,no-resolve
+# 自定义代理清单（走 PROXY）
+# 只放在中国大陆通常受阻、污染或跨境访问更稳定的服务。
+# 广告/统计域名、Apple 系统域名和临时 CDN IP 不放在这里，避免绕过 REJECT、破坏系统服务或造成规则漂移。
 
+# GitHub 与开发资源
+DOMAIN-SUFFIX,github.com
+DOMAIN-SUFFIX,githubassets.com
+DOMAIN-SUFFIX,githubcopilot.com
+DOMAIN-SUFFIX,githubusercontent.com
+DOMAIN-SUFFIX,npmjs.com
+DOMAIN-SUFFIX,npmjs.org
+DOMAIN-SUFFIX,pypi.org
+DOMAIN-SUFFIX,jsdelivr.net
+DOMAIN-SUFFIX,alpinelinux.org
+
+# Google、YouTube 与 Google API
+DOMAIN-SUFFIX,google.com
+DOMAIN-SUFFIX,google.co.jp
+DOMAIN-SUFFIX,googleapis.com
+DOMAIN-SUFFIX,googleusercontent.com
+DOMAIN-SUFFIX,gstatic.com
+DOMAIN-SUFFIX,googlevideo.com
+DOMAIN-SUFFIX,ytimg.com
+DOMAIN-SUFFIX,youtube.com
+DOMAIN-SUFFIX,ggpht.com
+DOMAIN-SUFFIX,pki.goog
+DOMAIN-SUFFIX,translate.googleapis.com
+
+# X、Meta、TikTok 与 Discord
+DOMAIN-SUFFIX,x.com
+DOMAIN-SUFFIX,x.ai
+DOMAIN-SUFFIX,twitter.com
+DOMAIN-SUFFIX,twimg.com
+DOMAIN-SUFFIX,t.co
+DOMAIN-SUFFIX,instagram.com
+DOMAIN-SUFFIX,cdninstagram.com
+DOMAIN-SUFFIX,facebook.com
+DOMAIN-SUFFIX,facebook.net
+DOMAIN-SUFFIX,fbcdn.net
+DOMAIN-SUFFIX,tiktok.com
+DOMAIN-SUFFIX,tiktokw.us
+DOMAIN-SUFFIX,eascdn.net
+DOMAIN-SUFFIX,ldstatic.com
+DOMAIN-SUFFIX,discord.com
+DOMAIN-SUFFIX,discord.gg
+DOMAIN-SUFFIX,discordapp.com
+DOMAIN-SUFFIX,discordapp.net
+
+# AI、模型与相关服务
+DOMAIN-SUFFIX,openai.com
+DOMAIN-SUFFIX,chatgpt.com
+DOMAIN-SUFFIX,oaistatic.com
+DOMAIN-SUFFIX,grok.com
+DOMAIN-SUFFIX,nousresearch.com
+DOMAIN-SUFFIX,exa.ai
+DOMAIN-SUFFIX,huggingface.co
+DOMAIN-SUFFIX,hf.co
+DOMAIN-SUFFIX,hf-mirror.com
+DOMAIN-SUFFIX,anyrouter.top
+DOMAIN-SUFFIX,models.dev
+DOMAIN-SUFFIX,t3.codes
+DOMAIN-SUFFIX,t3coderelay.com
+DOMAIN-SUFFIX,paseo.sh
+DOMAIN-SUFFIX,superlogical.com
+DOMAIN-SUFFIX,alma.now
+DOMAIN-SUFFIX,finchwork.app
+DOMAIN-SUFFIX,kelee.one
+DOMAIN-SUFFIX,nofxone.com
+DOMAIN-SUFFIX,deanchen.me
+DOMAIN-SUFFIX,herdr.dev
+
+# 日本、韩国及其他境外服务
+DOMAIN-SUFFIX,amazon.co.jp
+DOMAIN-SUFFIX,media-amazon.com
+DOMAIN-SUFFIX,ssl-images-amazon.com
+DOMAIN-SUFFIX,rakuten.co.jp
+DOMAIN-SUFFIX,rakuten-static.com
+DOMAIN-SUFFIX,rakuten.net
+DOMAIN-SUFFIX,yahoo.co.jp
+DOMAIN-SUFFIX,yimg.jp
+DOMAIN-SUFFIX,kakao.com
+DOMAIN-SUFFIX,kakaocorp.com
+DOMAIN-SUFFIX,line.me
+DOMAIN-SUFFIX,line-scdn.net
+DOMAIN-SUFFIX,linkedin.com
+DOMAIN-SUFFIX,licdn.com
+DOMAIN-SUFFIX,linux.do
+DOMAIN-SUFFIX,docomo.ne.jp
+DOMAIN-SUFFIX,jaist.ac.jp
+
+# 境外 SaaS 与应用依赖
+DOMAIN-SUFFIX,intercom.com
+DOMAIN-SUFFIX,intercom.io
+DOMAIN-SUFFIX,intercomassets.com
+DOMAIN-SUFFIX,intercomcdn.com
+DOMAIN-SUFFIX,expo.dev
+DOMAIN-SUFFIX,exp.host
+DOMAIN-SUFFIX,cloud.run
+DOMAIN-SUFFIX,pages.dev
+DOMAIN-SUFFIX,supabase.com
+DOMAIN-SUFFIX,supabase.co
+DOMAIN-SUFFIX,privy.io
+DOMAIN-SUFFIX,walletconnect.com
+DOMAIN-SUFFIX,sentry.io
+DOMAIN-SUFFIX,wovn.io
