@@ -26,6 +26,16 @@ DOMAIN-SUFFIX,ggpht.com
 DOMAIN-SUFFIX,pki.goog
 DOMAIN-SUFFIX,translate.googleapis.com
 
+DOMAIN-SUFFIX,antigravity.google
+
+DOMAIN-SUFFIX,gemini.google
+
+DOMAIN-SUFFIX,ai.dev
+
+DOMAIN-SUFFIX,idx.dev
+
+DOMAIN-SUFFIX,cloudworkstations.dev
+
 # X、Meta、TikTok 与 Discord
 DOMAIN-SUFFIX,x.com
 DOMAIN-SUFFIX,x.ai
