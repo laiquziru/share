@@ -144,5 +144,8 @@ DOMAIN-SUFFIX,privy.io
 DOMAIN-SUFFIX,walletconnect.com
 DOMAIN-SUFFIX,sentry.io
 DOMAIN-SUFFIX,wovn.io
+# 实测直连被拦截、需代理的 AI 服务
+DOMAIN,new.sharedchat.cc
+
 # 实测代理更快的中转服务
 DOMAIN-SUFFIX,paseo.sh
