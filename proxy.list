@@ -70,8 +70,6 @@ DOMAIN-SUFFIX,models.dev
 DOMAIN-SUFFIX,superlogical.com
 DOMAIN-SUFFIX,finchwork.app
 DOMAIN-SUFFIX,kelee.one
-DOMAIN-SUFFIX,nofxone.com
-DOMAIN-SUFFIX,deanchen.me
 DOMAIN-SUFFIX,herdr.dev
 
 # 日本、韩国及其他境外服务
@@ -145,6 +143,10 @@ DOMAIN-SUFFIX,walletconnect.com
 DOMAIN-SUFFIX,sentry.io
 DOMAIN-SUFFIX,wovn.io
 # 实测直连被拦截、需代理的 AI 服务
+DOMAIN-SUFFIX,console.x.ai
+DOMAIN,hub.linux.do
+DOMAIN-SUFFIX,aihub.top
+DOMAIN-SUFFIX,api.gemai.cc
 DOMAIN,new.sharedchat.cc
 
 # 实测代理更快的中转服务
