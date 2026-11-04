@@ -379,7 +379,7 @@ function main(config) {
       "GEOIP,cn,DIRECT",
 
       // 8. 最终未匹配流量 -> 交由「🐟 漏网之鱼」策略组决定 (默认 DIRECT)
-      "MATCH,🐟 漏网之鱼"
+      "MATCH,DIRECT"  // 默认出口：未匹配流量一律直连（避免被 store-selected 记住的代理兜底）
     ];
 
     // 去重仅保留每条规则首次出现的位置
