@@ -56,6 +56,22 @@ DOMAIN-SUFFIX,discord.gg
 DOMAIN-SUFFIX,discordapp.com
 DOMAIN-SUFFIX,discordapp.net
 
+# 图片提供的 Apple / AI 代理规则
+DOMAIN-SUFFIX,itunes.apple.com
+DOMAIN-SUFFIX,smp-device-content.apple.com
+DOMAIN-SUFFIX,xp.apple.com
+DOMAIN-SUFFIX,mesu.apple.com
+DOMAIN,guzzoni.apple.com
+DOMAIN-SUFFIX,smoot.apple.com
+DOMAIN,gateway.icloud.com
+DOMAIN,gs-loc-cn.apple.com
+DOMAIN,gspe1-ssl.ls.apple.com
+DOMAIN,p150-acscegateway.icloud.com
+DOMAIN,setup.icloud.com
+DOMAIN,bag.itunes.apple.com
+DOMAIN-KEYWORD,siri
+DOMAIN-SUFFIX,icloud-content.com
+
 # AI、模型与相关服务
 DOMAIN-SUFFIX,openai.com
 DOMAIN-SUFFIX,chatgpt.com
