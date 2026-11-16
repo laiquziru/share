@@ -53,6 +53,19 @@ DOMAIN,who.1ms.dog
 DOMAIN,airss.qiaomu.ai
 DOMAIN,wu.dstrml.org
 
+# 用户指定直连：常用 AI / 开发服务
+DOMAIN,chat.cindy.app
+DOMAIN,lqzr-ai-gateway.hf.space
+DOMAIN-SUFFIX,opencode.ai
+DOMAIN-SUFFIX,agentrouter.org
+DOMAIN-SUFFIX,qiaomu.ai
+DOMAIN-SUFFIX,workbuddy.ai
+DOMAIN-SUFFIX,workbuddy.cn
+DOMAIN-SUFFIX,registry.npmmirror.com
+DOMAIN,open.bigmodel.cn
+DOMAIN,api.trae.cn
+DOMAIN,dsh.r2049.cn
+
 # 中转/API 服务（直连）
 DOMAIN,relay.alma.now
 DOMAIN-SUFFIX,t3.codes
