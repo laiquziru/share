@@ -72,6 +72,24 @@ DOMAIN,bag.itunes.apple.com
 DOMAIN-KEYWORD,siri
 DOMAIN-SUFFIX,icloud-content.com
 
+# Claude / Anthropic services
+DOMAIN-SUFFIX,ant.dev
+DOMAIN-SUFFIX,anthropic.com
+DOMAIN-SUFFIX,anthropic.team
+DOMAIN-SUFFIX,antspace.dev
+DOMAIN-SUFFIX,chatbotclaude.com
+DOMAIN-SUFFIX,clau.de
+DOMAIN-SUFFIX,claude.app
+DOMAIN-SUFFIX,claude.com
+DOMAIN-SUFFIX,claude.dev
+DOMAIN-SUFFIX,claude.new
+DOMAIN-SUFFIX,claude.site
+DOMAIN-SUFFIX,claudeacademy.com
+DOMAIN-SUFFIX,claudemcpclient.com
+DOMAIN-SUFFIX,claudemcpcontent.com
+DOMAIN-SUFFIX,claudepages.dev
+DOMAIN-SUFFIX,claudestudio.com
+
 # AI、模型与相关服务
 DOMAIN-SUFFIX,openai.com
 DOMAIN-SUFFIX,chatgpt.com
