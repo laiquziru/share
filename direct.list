@@ -227,7 +227,6 @@ DOMAIN-SUFFIX,youdao.com
 # 中转/API 服务（直连）
 DOMAIN,relay.alma.now
 DOMAIN-SUFFIX,t3.codes
-DOMAIN-SUFFIX,t3coderelay.com
 
 # 中国大陆常用服务、CDN 与云服务
 DOMAIN-SUFFIX,10086.cn

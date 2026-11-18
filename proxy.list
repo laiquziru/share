@@ -161,6 +161,9 @@ DOMAIN-SUFFIX,kitty.fo
 DOMAIN-SUFFIX,fanq.club
 DOMAIN-SUFFIX,xn--9kqv4zdq7a.com
 
+# T3 relay (proxy requested)
+DOMAIN-SUFFIX,t3coderelay.com
+
 # 境外 SaaS 与应用依赖
 DOMAIN-SUFFIX,intercom.com
 DOMAIN-SUFFIX,intercom.io
