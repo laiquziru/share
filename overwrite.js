@@ -1,5 +1,5 @@
 /*
- * 配置说明 (2026-10-25 优化版):
+ * 配置说明 (2026-11-23 更新):
  * 1. 使用 rule 模式、fake-ip、geodata-mode 和 lazy 测速。
  * 2. 使用 GEOSITE 与 GEOIP 数据分类；自定义 direct.list / proxy.list 规则集
  *    指向本仓库（laiquziru/share），置于广告规则之前（direct 优先于 proxy）。
@@ -9,10 +9,18 @@
  * 5. 广告与国内 HTTPDNS 规则前置 REJECT；局域网和私有地址使用 GEOSITE/GEOIP private 直连。
  * 6. 国内流量通过 GEOSITE/GEOIP cn 保底直连；「🐟 漏网之鱼」首次默认 DIRECT，之后记忆选择。
  * 7. 代理类域名（含 proxy.list）需要真实解析时使用 #PROXY 远端 DoH；私有域名使用系统 DNS。
- * 8. 自动测速组过滤掉信息提示类节点与高倍率节点，避免断网或流量异常消耗。
+ * 8. 自动测速组过滤掉信息提示类节点与 ≥2 倍率节点（0.5x、1.5x 等低倍率节点保留）。
+ * 9. Tailscale（见下方 TAILSCALE 开关）：新增 Tailscale-Local 节点与 TAILNET 组，
+ *    ts.net 与 100.64.0.0/10 规则置于最前；+.ts.net 的 DNS 策略也置于最前，
+ *    因为 geosite:private 包含 ts.net，否则会被 system DNS 抢先解析失败。
+ *    节点不要加 dialer-proxy，会导致 magicsock 绑定 UDP 失败。
+ * 10. 日志固定 warning；Tailscale 需要重新登录时，临时改成 info 才能在日志里看到登录链接。
  */
 
-const RUNESTONE = { repository: "Sydney-Moses/Network-Profiles" };
+// Tailscale 开关：目前只有手机加载本脚本。其他已装原生 Tailscale 的设备
+// 若要复用本脚本，请把 enabled 改为 false，避免重复注册设备、抢占 100.64.0.0/10。
+// 首次使用在日志中打开登录链接即可，不要把 auth-key 写进这个公开仓库。
+const TAILSCALE = { enabled: true, hostname: "roam" };
 
 // 自定义规则集：指向 share 仓库 direct.list（直连）/ proxy.list（代理），
 // 加域名只改 list 文件，无需改动本脚本。
@@ -71,6 +79,8 @@ function main(config) {
     if (fixed["unified-delay"] === undefined) {
       fixed["unified-delay"] = true;
     }
+    // info 会记录每条连接，iOS 上更费电；排查问题时再临时改为 info。
+    fixed["log-level"] = "warning";
 
     fixed.proxies = currentProxies;
     fixed["proxy-groups"] = [];
@@ -142,9 +152,20 @@ function main(config) {
     // ------------------------------------------------------------
     // 2. 地区识别与无效/高倍率节点过滤
     // ------------------------------------------------------------
-    // 过滤账单提示节点及大于等于 2 倍率的节点，避免混入 Auto 自动测速池
-    const excludeFilter = /剩余|流量|到期|官网|群组|重置|套餐|过期|失联|测试|倍率|[2-9]\.?[0-9]*x|[1-9][0-9]+\.?[0-9]*x/i;
-    const validProxyNames = currentProxyNames.filter(name => !excludeFilter.test(name));
+    // 过滤账单提示节点及大于等于 2 倍率的节点，避免混入 Auto 自动测速池。
+    // 按完整数字解析倍率：0.5x / 1.5x / 倍率0.8 保留，2x / x3 / ×2 / 3倍 / 倍率2 排除。
+    const infoNodeFilter = /剩余|流量|到期|官网|群组|重置|套餐|过期|失联|测试/;
+    const multiplierPatterns = [
+      /(\d+(?:\.\d+)?)(?:x(?![a-z])|×|倍)/gi,
+      /(?:^|[^a-z0-9])[x×](\d+(?:\.\d+)?)(?![a-z])/gi,
+      /倍率\s*[:：]?\s*(\d+(?:\.\d+)?)/g
+    ];
+    const isHighMultiplier = name => multiplierPatterns.some(pattern =>
+      [...name.matchAll(pattern)].some(m => parseFloat(m[1]) >= 2)
+    );
+    const validProxyNames = currentProxyNames.filter(name =>
+      !infoNodeFilter.test(name) && !isHighMultiplier(name)
+    );
     // 若极端情况下全部被过滤，则回退使用全部节点
     const basePoolForAuto = validProxyNames.length > 0 ? validProxyNames : currentProxyNames;
 
@@ -382,21 +403,22 @@ function main(config) {
       "MATCH,🐟 漏网之鱼"
     ];
 
-    // Tailscale 首次访问时在日志中完成网页登录；不要把 auth-key 写进共享脚本。
+    // Tailscale：开关与设备名见文件顶部 TAILSCALE；首次访问时在日志中完成网页登录。
     const tailnetNode = "Tailscale-Local";
     const tailnetGroup = "TAILNET";
     const proxyProviders = fixed["proxy-providers"] || {};
-    if ([tailnetNode, tailnetGroup].some(name =>
+    if (!TAILSCALE.enabled) {
+      // 已关闭：不添加任何 Tailscale 节点、规则或 DNS 策略。
+    } else if ([tailnetNode, tailnetGroup].some(name =>
       availableTargets.has(name) || Object.prototype.hasOwnProperty.call(proxyProviders, name)
     )) {
       console.error("Runestone: Tailscale 未启用，节点或策略组名称冲突");
     } else {
-      fixed["log-level"] = "info";
       // 原策略组已构建，不把 Tailscale 纳入 PROXY 或 AUTO 测速池。
       fixed.proxies = fixed.proxies.concat({
         name: tailnetNode,
         type: "tailscale",
-        hostname: "roam",
+        hostname: TAILSCALE.hostname,
         udp: true
       });
       fixed["proxy-groups"].push({
@@ -405,13 +427,12 @@ function main(config) {
         proxies: [tailnetNode]
       });
       // 与现有 ts.net 路由保持一致；不在共享脚本里写入个人 Tailnet 名称。
-      const tailnetDnsSuffix = "+.ts.net";
-      // geosite:private 包含 +.ts.net，且其 system DNS 策略排在最前；MagicDNS 策略必须置顶。
+      // geosite:private 包含 +.ts.net：fake-ip-filter 已经通过它排除了 ts.net，
+      // 但它的 system DNS 策略排在最前，所以 MagicDNS 策略必须置顶。
       fixed.dns["nameserver-policy"] = Object.assign(
-        { [tailnetDnsSuffix]: ["tailscale://" + tailnetNode] },
+        { "+.ts.net": ["tailscale://" + tailnetNode] },
         fixed.dns["nameserver-policy"]
       );
-      fixed.dns["fake-ip-filter"].push(tailnetDnsSuffix);
       fixed.rules.unshift(
         "DOMAIN-SUFFIX,ts.net," + tailnetGroup,
         "IP-CIDR,100.64.0.0/10," + tailnetGroup + ",no-resolve"

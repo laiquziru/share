@@ -8,13 +8,15 @@
 
 | 文件 | 说明 |
 |---|---|
-| [`overwrite.js`](overwrite.js) | Clash（mihomo 内核）覆写脚本：GEOSITE/GEOIP 分流、策略组重建、DNS 分流，并通过 rule-providers 引用下面两个清单（gh-proxy 地址，每日自动更新） |
+| [`overwrite.js`](overwrite.js) | Clash（mihomo 内核）覆写脚本：GEOSITE/GEOIP 分流、策略组重建、DNS 分流，并通过 rule-providers 引用下面两个清单（gh-proxy 地址，每日自动更新）；内置 Tailscale 出站（见下方说明） |
 | [`direct.list`](direct.list) | 自定义**直连**清单 ✅ 生效中 |
 | [`proxy.list`](proxy.list) | 自定义**代理**清单 ✅ 生效中 |
 | [`lqzr.sgmodule`](lqzr.sgmodule) | Clash Mi / Shadowrocket 模块（备用）：AI / Telegram / 流媒体分流 + 去广告重写 + GitHub 加速 |
 | [`chatgpt.png`](chatgpt.png) | 覆写脚本中 🤖 AI 策略组的图标 |
 
 **怎么用**：在 Clash 类客户端（Clash Mi / Stash 等）把 `overwrite.js` 配置为覆写脚本，订阅拉取后自动生效。
+
+**Tailscale**：脚本会添加 `Tailscale-Local` 节点（设备名 `roam`）和 `TAILNET` 组，`ts.net` / `100.64.0.0/10` 走 Tailnet。目前只给手机用；已装原生 Tailscale 的设备要复用脚本，请把文件顶部 `TAILSCALE.enabled` 改为 `false`。首次登录要把日志临时调到 `info`，在日志里打开登录链接；不要把 auth-key 写进本仓库。
 
 **加域名**：编辑 `direct.list` / `proxy.list` 加一行提交即可，脚本不用动：
 
