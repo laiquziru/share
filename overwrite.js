@@ -396,7 +396,7 @@ function main(config) {
       fixed.proxies = fixed.proxies.concat({
         name: tailnetNode,
         type: "tailscale",
-        hostname: "phone-clash",
+        hostname: "roam",
         "dialer-proxy": "PROXY",
         udp: true
       });
