@@ -397,6 +397,7 @@ function main(config) {
         name: tailnetNode,
         type: "tailscale",
         hostname: "phone-clash",
+        "dialer-proxy": "PROXY",
         udp: true
       });
       fixed["proxy-groups"].push({
