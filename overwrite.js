@@ -397,7 +397,6 @@ function main(config) {
         name: tailnetNode,
         type: "tailscale",
         hostname: "roam",
-        "dialer-proxy": "PROXY",
         udp: true
       });
       fixed["proxy-groups"].push({
