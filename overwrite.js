@@ -405,6 +405,10 @@ function main(config) {
         type: "select",
         proxies: [tailnetNode]
       });
+      // 与现有 ts.net 路由保持一致；不在共享脚本里写入个人 Tailnet 名称。
+      const tailnetDnsSuffix = "+.ts.net";
+      nameserverPolicy[tailnetDnsSuffix] = ["tailscale://" + tailnetNode];
+      fixed.dns["fake-ip-filter"].push(tailnetDnsSuffix);
       fixed.rules.unshift(
         "DOMAIN-SUFFIX,ts.net," + tailnetGroup,
         "IP-CIDR,100.64.0.0/10," + tailnetGroup + ",no-resolve"
