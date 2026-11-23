@@ -1,53 +1,84 @@
 /*
- * 配置说明 (2026-11-23 更新):
+ * 配置说明 (2026-11-23 修复优化版):
  * 1. 使用 rule 模式、fake-ip、geodata-mode 和 lazy 测速。
  * 2. 使用 GEOSITE 与 GEOIP 数据分类；自定义 direct.list / proxy.list 规则集
- *    指向本仓库（laiquziru/share），置于广告规则之前（direct 优先于 proxy）。
+ *    指向本仓库 (laiquziru/share)，默认直连 GitHub Raw 并走 PROXY（支持可选镜像前缀），
+ *    置于广告规则之前 (direct 优先于 proxy)。
  * 3. GFW、Instagram、Google、GitHub、X、YouTube、Netflix、Spotify、TikTok
- *    以及非中国学术站点走 PROXY；国外 AI 服务走 AI 连通性故障转移组（排除 HK）。
- * 4. Telegram 域名与 IP 交由「📱 Telegram」组选择 DIRECT 或 PROXY，首次默认 DIRECT。
+ *    以及非中国学术站点走 PROXY；国外 AI 服务走 AI 连通性故障转移组 (排除 HK，
+ *    仅在无美/新/日节点时才回退 AUTO)。
+ * 4. Telegram 域名与 IP 交由「📱 Telegram」组选择 DIRECT 或 PROXY，策略与 DNS 代理
+ *    行为可在顶部 TELEGRAM 配置块统一调整。
  * 5. 广告与国内 HTTPDNS 规则前置 REJECT；局域网和私有地址使用 GEOSITE/GEOIP private 直连。
  * 6. 国内流量通过 GEOSITE/GEOIP cn 保底直连；「🐟 漏网之鱼」首次默认 DIRECT，之后记忆选择。
- * 7. 代理类域名（含 proxy.list）需要真实解析时使用 #PROXY 远端 DoH；私有域名使用系统 DNS。
- * 8. 自动测速组过滤掉信息提示类节点与 ≥2 倍率节点（0.5x、1.5x 等低倍率节点保留）。
- * 9. Tailscale（见下方 TAILSCALE 开关）：新增 Tailscale-Local 节点与 TAILNET 组，
+ * 7. 代理类域名 (含 proxy.list) 需要真实解析时使用 #PROXY 远端 DoH；私有域名使用系统 DNS。
+ * 8. 自动测速组过滤掉信息提示类节点与 ≥2 倍率节点 (0.5x、1.5x 等低倍率节点保留)；
+ *    修复地区正则右边界字符类，兼容 [US]、(HK) 等括号命名。
+ * 9. Tailscale (见下方 TAILSCALE 开关)：新增 Tailscale-Local 节点与 TAILNET 组，
  *    ts.net 与 100.64.0.0/10 规则置于最前；+.ts.net 的 DNS 策略也置于最前，
  *    因为 geosite:private 包含 ts.net，否则会被 system DNS 抢先解析失败。
  *    节点不要加 dialer-proxy，会导致 magicsock 绑定 UDP 失败。
+ *    已移除公开仓库中硬编码的个人 Tailnet hosts，请按需在本地私有配置中填写 TAILSCALE.hosts。
  * 10. 日志固定 warning；Tailscale 需要重新登录时，临时改成 info 才能在日志里看到登录链接。
  */
 
 // Tailscale 开关：目前只有手机加载本脚本。其他已装原生 Tailscale 的设备
 // 若要复用本脚本，请把 enabled 改为 false，避免重复注册设备、抢占 100.64.0.0/10。
-// 首次使用在日志中打开登录链接即可，不要把 auth-key 写进这个公开仓库。
-const TAILSCALE = { enabled: true, hostname: "roam" };
-
-// 自定义规则集：指向 share 仓库 direct.list（直连）/ proxy.list（代理），
-// 加域名只改 list 文件，无需改动本脚本。
-const customRuleProviders = {
-  direct: {
-    type: "http",
-    behavior: "classical",
-    format: "text",
-    url: "https://gh-proxy.com/https://raw.githubusercontent.com/laiquziru/share/main/direct.list",
-    path: "./ruleset/direct.list",
-    interval: 86400
-  },
-  proxy: {
-    type: "http",
-    behavior: "classical",
-    format: "text",
-    url: "https://gh-proxy.com/https://raw.githubusercontent.com/laiquziru/share/main/proxy.list",
-    path: "./ruleset/proxy.list",
-    interval: 86400
-  }
+// 首次使用在日志中打开登录链接即可，不要把 auth-key 或个人 Tailnet 域名/IP 写进公开仓库。
+const TAILSCALE = {
+  enabled: true,
+  hostname: "roam",
+  // 若需固定个别 Tailnet 主机解析，请仅在本地私有副本中填写，例如：
+  // hosts: { "node.tailxxxx.ts.net": "100.x.y.z" }
+  hosts: {}
 };
+
+// Telegram 默认策略与 DNS 行为：
+// - defaultTarget: 首次默认选 "DIRECT" 或 "PROXY"（之后由 store-selected 记忆）
+// - dnsViaProxy: true 时 geosite:telegram 走 #PROXY 远端 DoH 防污染；
+//   若在可直连 Telegram 的海外/专线环境下希望完全不依赖 PROXY，可设为 false。
+const TELEGRAM = {
+  defaultTarget: "DIRECT",
+  dnsViaProxy: true
+};
+
+// 自定义规则集来源：
+// - mirrorPrefix 为空时，直接从 GitHub Raw 拉取并自动经由 PROXY 组下载，避免第三方反代单点风险；
+// - 若需使用自建或可信镜像（如 "https://your-mirror.example/"），填入后将直连镜像下载。
+const RULE_SOURCE = {
+  rawBaseUrl: "https://raw.githubusercontent.com/laiquziru/share/main",
+  mirrorPrefix: ""
+};
+
+function buildCustomRuleProviders() {
+  const buildProvider = (filename, path) => {
+    const rawUrl = RULE_SOURCE.rawBaseUrl + "/" + filename;
+    const useMirror = Boolean(RULE_SOURCE.mirrorPrefix);
+    const provider = {
+      type: "http",
+      behavior: "classical",
+      format: "text",
+      url: useMirror ? RULE_SOURCE.mirrorPrefix + rawUrl : rawUrl,
+      path: path,
+      interval: 86400
+    };
+    if (!useMirror) {
+      provider.proxy = "PROXY";
+    }
+    return provider;
+  };
+
+  return {
+    direct: buildProvider("direct.list", "./ruleset/direct.list"),
+    proxy: buildProvider("proxy.list", "./ruleset/proxy.list")
+  };
+}
 
 function main(config) {
   try {
-    // ------------------------------------------------------------
+    // -----------------------------------------------------------------
     // 0. 前置校验与配置覆写
-    // ------------------------------------------------------------
+    // -----------------------------------------------------------------
     if (!config || typeof config !== "object" || Array.isArray(config)) {
       throw new Error("Runestone: expected a configuration object");
     }
@@ -85,7 +116,7 @@ function main(config) {
     fixed.proxies = currentProxies;
     fixed["proxy-groups"] = [];
     // 路由与 DNS 策略由本脚本重建；仅保留指向自有 share 仓库的自定义规则集。
-    fixed["rule-providers"] = customRuleProviders;
+    fixed["rule-providers"] = buildCustomRuleProviders();
     delete fixed["sub-rules"];
 
     const aiGeosite = "category-ai-!cn";
@@ -94,6 +125,7 @@ function main(config) {
       "instagram", "google", "github", "twitter", "youtube",
       "netflix", "spotify", "tiktok", "category-scholar-!cn", "gfw"
     ];
+
     const domesticDns = [
       "https://dns.alidns.com/dns-query",
       "https://doh.pub/dns-query"
@@ -102,14 +134,17 @@ function main(config) {
       "https://1.1.1.1/dns-query#PROXY",
       "https://dns.google/dns-query#PROXY"
     ];
+    // Cloudflare 1.1.1.1 不透传 EDNS Client Subnet，避免 PROXY 选到 HK 时影响 AI 服务解析。
+    const aiRemoteDns = [
+      "https://1.1.1.1/dns-query#PROXY"
+    ];
+
     const nameserverPolicy = {
       "geosite:private": ["system"],
       "rule-set:direct": domesticDns.slice(),
       "rule-set:proxy": remoteDns.slice(),
-      ["geosite:" + aiGeosite]: remoteDns.slice(),
-      // Telegram DNS uses remote DoH to avoid local pollution. Traffic remains
-      // selectable through the Telegram policy group below.
-      "geosite:telegram": remoteDns.slice()
+      ["geosite:" + aiGeosite]: aiRemoteDns.slice(),
+      "geosite:telegram": TELEGRAM.dnsViaProxy ? remoteDns.slice() : domesticDns.slice()
     };
     // 与业务规则共用分类，避免新增代理服务却遗漏 DNS 分流。
     proxyGeosites.forEach(site => {
@@ -117,9 +152,9 @@ function main(config) {
     });
     nameserverPolicy["geosite:cn"] = domesticDns.slice();
 
-    // ------------------------------------------------------------
-    // 1. DNS 分流配置（不代替系统 DNS 接管）
-    // ------------------------------------------------------------
+    // -----------------------------------------------------------------
+    // 1. DNS 分流配置 (不代替系统 DNS 接管)
+    // -----------------------------------------------------------------
     fixed.dns = Object.assign({}, config.dns, {
       enable: true,
       ipv6: false,
@@ -149,9 +184,9 @@ function main(config) {
     // 节点域名固定使用独立的国内 DNS，不继承可能引用旧规则集或代理的策略。
     delete fixed.dns["proxy-server-nameserver-policy"];
 
-    // ------------------------------------------------------------
+    // -----------------------------------------------------------------
     // 2. 地区识别与无效/高倍率节点过滤
-    // ------------------------------------------------------------
+    // -----------------------------------------------------------------
     // 过滤账单提示节点及大于等于 2 倍率的节点，避免混入 Auto 自动测速池。
     // 按完整数字解析倍率：0.5x / 1.5x / 倍率0.8 保留，2x / x3 / ×2 / 3倍 / 倍率2 排除。
     const infoNodeFilter = /剩余|流量|到期|官网|群组|重置|套餐|过期|失联|测试/;
@@ -169,11 +204,12 @@ function main(config) {
     // 若极端情况下全部被过滤，则回退使用全部节点
     const basePoolForAuto = validProxyNames.length > 0 ? validProxyNames : currentProxyNames;
 
+    // 修复右边界字符类：由 [\s_\-(\[] 修正为 [\s_\-)\]]，确保 [US]、(HK) 等命名正常匹配。
     const regionGroups = [
-      { key: "US", name: "🇺🇸 US", filter: /(?:^|[\s_\-()[\]])(US|USA|SJC|LAX|SEA)(?:$|[\s_\-()[\]])|United[ _-]?States|America|美国|美國|洛杉矶|硅谷|西雅图|圣何塞|芝加哥|达拉斯|🇺🇸/i },
-      { key: "JP", name: "🇯🇵 JP", filter: /(?:^|[\s_\-()[\]])(JP|JPN|NRT|KIX)(?:$|[\s_\-()[\]])|Japan|Tokyo|Osaka|日本|东京|大阪|名古屋|埼玉|🇯🇵/i },
-      { key: "SG", name: "🇸🇬 SG", filter: /(?:^|[\s_\-()[\]])(SG|SGP|SIN)(?:$|[\s_\-()[\]])|Singapore|新加坡|狮城|🇸🇬/i },
-      { key: "HK", name: "🇭🇰 HK", filter: /(?:^|[\s_\-()[\]])(HK|HKG)(?:$|[\s_\-()[\]])|Hong[ _-]?Kong|香港|港島|九龙|新界|深港|沪港|广港|🇭🇰/i }
+      { key: "US", name: "🇺🇸 US", filter: /(?:^|[\s_\-(\[])(US|USA|SJC|LAX|SEA)(?:$|[\s_\-)\]])|United[ _-]?States|America|美国|美國|洛杉矶|硅谷|西雅图|圣何塞|芝加哥|达拉斯|🇺🇸/i },
+      { key: "JP", name: "🇯🇵 JP", filter: /(?:^|[\s_\-(\[])(JP|JPN|NRT|KIX)(?:$|[\s_\-)\]])|Japan|Tokyo|Osaka|日本|东京|大阪|名古屋|埼玉|🇯🇵/i },
+      { key: "SG", name: "🇸🇬 SG", filter: /(?:^|[\s_\-(\[])(SG|SGP|SIN)(?:$|[\s_\-)\]])|Singapore|新加坡|狮城|🇸🇬/i },
+      { key: "HK", name: "🇭🇰 HK", filter: /(?:^|[\s_\-(\[])(HK|HKG)(?:$|[\s_\-)\]])|Hong[ _-]?Kong|香港|港岛|九龙|新界|深港|沪港|广港|🇭🇰/i }
     ];
 
     const regionalNodes = {};
@@ -198,9 +234,9 @@ function main(config) {
       ? [...allRegionalNodes, ...unmatchedNodes]
       : basePoolForAuto.slice();
 
-    // ------------------------------------------------------------
+    // -----------------------------------------------------------------
     // 3. 策略组 (包含 AI Fallback、漏网之鱼 与省电优化)
-    // ------------------------------------------------------------
+    // -----------------------------------------------------------------
     const groupIcon = {
       PROXY: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Proxy.png",
       AUTO: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Auto.png",
@@ -258,7 +294,7 @@ function main(config) {
       proxies: autoPool.slice()
     }, healthCheck));
 
-    // 外层顺序：AUTO -> 🇭🇰 HK -> HK-Auto -> 其它 Auto（仅在存在香港节点时生成）
+    // 外层顺序：AUTO -> 🇭🇰 HK -> HK-Auto -> 其它 Auto (仅在存在香港节点时生成)
     if (regionalNodes.HK) {
       fixed["proxy-groups"].push({
         name: "🇭🇰 HK",
@@ -291,7 +327,8 @@ function main(config) {
       }, healthCheck));
     });
 
-    // 仅检测 HTTPS 连通性，顺序为 US -> SG -> JP -> AUTO（排除 HK 避免触发 AI 地区封锁）。
+    // 仅检测 HTTPS 连通性，顺序为 US -> SG -> JP (排除 HK 避免触发 AI 地区封锁)。
+    // 仅在订阅中完全没有 US/SG/JP 节点时，才回退到 AUTO，避免有可用非港地区时误回退到香港。
     const aiFallbackProxies = [];
     if (regionalNodes.US) {
       aiFallbackProxies.push(autoByKey.US);
@@ -302,9 +339,9 @@ function main(config) {
     if (regionalNodes.JP) {
       aiFallbackProxies.push(autoByKey.JP);
     }
-
-    // 保留原有全局备用路径，但 AUTO 不保证选择 AI 支持的地区。
-    aiFallbackProxies.push("AUTO");
+    if (aiFallbackProxies.length === 0) {
+      aiFallbackProxies.push("AUTO");
+    }
 
     fixed["proxy-groups"].push(Object.assign({
       name: "🤖 AI",
@@ -314,11 +351,14 @@ function main(config) {
     }, aiHealthCheck));
 
     // Telegram 独立开关；PROXY 跟随主代理组，选择会被 profile 记忆。
+    const telegramTargets = TELEGRAM.defaultTarget === "PROXY"
+      ? ["PROXY", "DIRECT"]
+      : ["DIRECT", "PROXY"];
     fixed["proxy-groups"].push({
       name: telegramGroupName,
       type: "select",
       icon: groupIcon.TG,
-      proxies: ["DIRECT", "PROXY"]
+      proxies: telegramTargets
     });
 
     // 首次默认 DIRECT；store-selected 会保留用户之后的选择。
@@ -329,9 +369,9 @@ function main(config) {
       proxies: ["DIRECT", "PROXY", "AUTO", ...autoNames]
     });
 
-    // ------------------------------------------------------------
+    // -----------------------------------------------------------------
     // 4. 冲突校验
-    // ------------------------------------------------------------
+    // -----------------------------------------------------------------
     const reserved = new Set([
       "DIRECT", "REJECT", "REJECT-DROP", "PASS", "PASS-RULE", "COMPATIBLE", "GLOBAL",
       ...fixed["proxy-groups"].map(g => g.name)
@@ -364,15 +404,15 @@ function main(config) {
       }
     });
 
-    // ------------------------------------------------------------
+    // -----------------------------------------------------------------
     // 5. 分流规则 (内置 GEOSITE/GEOIP + share 仓库自定义规则集)
-    // ------------------------------------------------------------
+    // -----------------------------------------------------------------
     fixed.rules = [
       // 1. 局域网与私有域名/IP 直连
       "GEOSITE,private,DIRECT",
       "GEOIP,private,DIRECT,no-resolve",
 
-      // 1.5 自定义规则集（direct 优先于 proxy，置于广告拦截之前以便处理误杀）
+      // 1.5 自定义规则集 (direct 优先于 proxy，置于广告拦截之前以便处理误杀)
       "RULE-SET,direct,DIRECT",
       "RULE-SET,proxy,PROXY",
 
@@ -395,7 +435,7 @@ function main(config) {
       "GEOIP,netflix,PROXY,no-resolve",
       "GEOIP,twitter,PROXY,no-resolve",
 
-      // 7. 国内域名与 IP 保底直连（移除 GEOIP,cn 的 no-resolve，确保未收录的国内冷门域名能通过解析 IP 精准直连）
+      // 7. 国内域名与 IP 保底直连 (移除 GEOIP,cn 的 no-resolve，确保未收录的国内冷门域名能通过解析 IP 精准直连)
       "GEOSITE,cn,DIRECT",
       "GEOIP,cn,DIRECT",
 
@@ -426,10 +466,10 @@ function main(config) {
         type: "select",
         proxies: [tailnetNode]
       });
-      // 固定 c3 的 Tailnet 地址，避免此域名偶发解析失败；保留订阅已有 hosts。
-      fixed.hosts = Object.assign({}, fixed.hosts, {
-        "c3.tailc8b5aa.ts.net": "100.110.213.97"
-      });
+      // 仅在本地配置了 TAILSCALE.hosts 时合并，保留订阅已有 hosts。
+      if (TAILSCALE.hosts && Object.keys(TAILSCALE.hosts).length > 0) {
+        fixed.hosts = Object.assign({}, fixed.hosts, TAILSCALE.hosts);
+      }
       // 其他 ts.net 域名仍使用 MagicDNS。
       // geosite:private 包含 +.ts.net：fake-ip-filter 已经通过它排除了 ts.net，
       // 但它的 system DNS 策略排在最前，所以 MagicDNS 策略必须置顶。
@@ -449,7 +489,7 @@ function main(config) {
     return fixed;
 
   } catch (err) {
-    console.error("Runestone 脚本执行失败，已回退至原始配置: " + err.message);
+    console.error("Runestone 脚本执行失败，已回退至原始配置：" + err.message);
     return config;
   }
 }
