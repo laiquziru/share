@@ -426,7 +426,11 @@ function main(config) {
         type: "select",
         proxies: [tailnetNode]
       });
-      // 与现有 ts.net 路由保持一致；不在共享脚本里写入个人 Tailnet 名称。
+      // 固定 c3 的 Tailnet 地址，避免此域名偶发解析失败；保留订阅已有 hosts。
+      fixed.hosts = Object.assign({}, fixed.hosts, {
+        "c3.tailc8b5aa.ts.net": "100.110.213.97"
+      });
+      // 其他 ts.net 域名仍使用 MagicDNS。
       // geosite:private 包含 +.ts.net：fake-ip-filter 已经通过它排除了 ts.net，
       // 但它的 system DNS 策略排在最前，所以 MagicDNS 策略必须置顶。
       fixed.dns["nameserver-policy"] = Object.assign(
