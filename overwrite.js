@@ -382,6 +382,34 @@ function main(config) {
       "MATCH,🐟 漏网之鱼"
     ];
 
+    // Tailscale 首次访问时在日志中完成网页登录；不要把 auth-key 写进共享脚本。
+    const tailnetNode = "Tailscale-Local";
+    const tailnetGroup = "TAILNET";
+    const proxyProviders = fixed["proxy-providers"] || {};
+    if ([tailnetNode, tailnetGroup].some(name =>
+      availableTargets.has(name) || Object.prototype.hasOwnProperty.call(proxyProviders, name)
+    )) {
+      console.error("Runestone: Tailscale 未启用，节点或策略组名称冲突");
+    } else {
+      fixed["log-level"] = "info";
+      // 原策略组已构建，不把 Tailscale 纳入 PROXY 或 AUTO 测速池。
+      fixed.proxies = fixed.proxies.concat({
+        name: tailnetNode,
+        type: "tailscale",
+        hostname: "phone-clash",
+        udp: true
+      });
+      fixed["proxy-groups"].push({
+        name: tailnetGroup,
+        type: "select",
+        proxies: [tailnetNode]
+      });
+      fixed.rules.unshift(
+        "DOMAIN-SUFFIX,ts.net," + tailnetGroup,
+        "IP-CIDR,100.64.0.0/10," + tailnetGroup + ",no-resolve"
+      );
+    }
+
     // 去重仅保留每条规则首次出现的位置
     fixed.rules = [...new Set(fixed.rules)];
 
