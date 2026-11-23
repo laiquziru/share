@@ -406,7 +406,11 @@ function main(config) {
       });
       // 与现有 ts.net 路由保持一致；不在共享脚本里写入个人 Tailnet 名称。
       const tailnetDnsSuffix = "+.ts.net";
-      nameserverPolicy[tailnetDnsSuffix] = ["tailscale://" + tailnetNode];
+      // geosite:private 包含 +.ts.net，且其 system DNS 策略排在最前；MagicDNS 策略必须置顶。
+      fixed.dns["nameserver-policy"] = Object.assign(
+        { [tailnetDnsSuffix]: ["tailscale://" + tailnetNode] },
+        fixed.dns["nameserver-policy"]
+      );
       fixed.dns["fake-ip-filter"].push(tailnetDnsSuffix);
       fixed.rules.unshift(
         "DOMAIN-SUFFIX,ts.net," + tailnetGroup,
