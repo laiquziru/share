@@ -1,19 +1,19 @@
 /*
- * 配置说明 (2026-11-23 修复优化版):
- * 1. 使用 rule 模式、fake-ip、geodata-mode 和 lazy 测速。
+ * 配置说明 (2026-11-24 完善优化版):
+ * 1. 使用 rule 模式、fake-ip、geodata-mode、sniffer 域名嗅探和 lazy 测速。
  * 2. 使用 GEOSITE 与 GEOIP 数据分类；自定义 direct.list / proxy.list 规则集
  *    指向本仓库 (laiquziru/share)，默认直连 GitHub Raw 并走 PROXY（支持可选镜像前缀），
  *    置于广告规则之前 (direct 优先于 proxy)。
  * 3. GFW、Instagram、Google、GitHub、X、YouTube、Netflix、Spotify、TikTok
- *    以及非中国学术站点走 PROXY；国外 AI 服务走 AI 连通性故障转移组 (排除 HK，
- *    仅在无美/新/日节点时才回退 AUTO)。
+ *    以及非中国学术站点走 PROXY；国外 AI 服务走 AI 连通性故障转移组 (US/SG/JP/TW，排除 HK)。
+ *    默认屏蔽 YouTube 的 QUIC (UDP 443) 强制回落 TCP，可通过顶部 QUIC 开关控制。
  * 4. Telegram 域名与 IP 交由「📱 Telegram」组选择 DIRECT 或 PROXY，策略与 DNS 代理
  *    行为可在顶部 TELEGRAM 配置块统一调整。
  * 5. 广告与国内 HTTPDNS 规则前置 REJECT；局域网和私有地址使用 GEOSITE/GEOIP private 直连。
  * 6. 国内流量通过 GEOSITE/GEOIP cn 保底直连；「🐟 漏网之鱼」首次默认 DIRECT，之后记忆选择。
  * 7. 代理类域名 (含 proxy.list) 需要真实解析时使用 #PROXY 远端 DoH；私有域名使用系统 DNS。
- * 8. 自动测速组过滤掉信息提示类节点与 ≥2 倍率节点 (0.5x、1.5x 等低倍率节点保留)；
- *    修复地区正则右边界字符类，兼容 [US]、(HK) 等括号命名。
+ * 8. 自动测速组过滤掉信息提示类节点与 ≥2 倍率节点 (0.5x、1.5x 等低倍率节点保留；
+ *    收紧倍率正则避免误伤 HK-x2 类编号)；支持 US/JP/SG/TW/HK 五区识别并修复括号右边界。
  * 9. Tailscale (见下方 TAILSCALE 开关)：新增 Tailscale-Local 节点与 TAILNET 组，
  *    ts.net 与 100.64.0.0/10 规则置于最前；+.ts.net 的 DNS 策略也置于最前，
  *    因为 geosite:private 包含 ts.net，否则会被 system DNS 抢先解析失败。
@@ -40,6 +40,14 @@ const TAILSCALE = {
 const TELEGRAM = {
   defaultTarget: "DIRECT",
   dnsViaProxy: true
+};
+
+// 域名嗅探与 QUIC 控制：
+// - snifferEnabled: 为 HTTP/TLS (80/443) 开启域名嗅探，防止直连 IP 的客户端绕过域名分流
+// - blockYoutubeQuic: 拦截 YouTube 的 UDP 443 (QUIC)，强制回落 TCP 减少移动端转圈
+const TRAFFIC_OPTIONS = {
+  snifferEnabled: true,
+  blockYoutubeQuic: true
 };
 
 // 自定义规则集来源：
@@ -153,7 +161,7 @@ function main(config) {
     nameserverPolicy["geosite:cn"] = domesticDns.slice();
 
     // -----------------------------------------------------------------
-    // 1. DNS 分流配置 (不代替系统 DNS 接管)
+    // 1. DNS 分流与域名嗅探配置 (不代替系统 DNS 接管)
     // -----------------------------------------------------------------
     fixed.dns = Object.assign({}, config.dns, {
       enable: true,
@@ -184,15 +192,53 @@ function main(config) {
     // 节点域名固定使用独立的国内 DNS，不继承可能引用旧规则集或代理的策略。
     delete fixed.dns["proxy-server-nameserver-policy"];
 
+    // Mihomo 域名嗅探：跳过局域网、私有地址、Apple 推送与 Tailscale 域名，避免干扰内网服务。
+    if (TRAFFIC_OPTIONS.snifferEnabled) {
+      fixed.sniffer = {
+        enable: true,
+        "force-dns-mapping": true,
+        "parse-pure-ip": true,
+        "override-destination": false,
+        sniff: {
+          HTTP: {
+            ports: [80, "8080-8880"],
+            "override-destination": true
+          },
+          TLS: {
+            ports: [443, 8443]
+          }
+        },
+        "skip-domain": [
+          "Mijia Cloud",
+          "+.push.apple.com",
+          "+.ts.net",
+          "+.lan",
+          "+.local",
+          "+.localdomain",
+          "+.localhost",
+          "+.home.arpa"
+        ],
+        "skip-dst-address": [
+          "10.0.0.0/8",
+          "100.64.0.0/10",
+          "127.0.0.0/8",
+          "169.254.0.0/16",
+          "172.16.0.0/12",
+          "192.168.0.0/16"
+        ]
+      };
+    }
+
     // -----------------------------------------------------------------
     // 2. 地区识别与无效/高倍率节点过滤
     // -----------------------------------------------------------------
     // 过滤账单提示节点及大于等于 2 倍率的节点，避免混入 Auto 自动测速池。
-    // 按完整数字解析倍率：0.5x / 1.5x / 倍率0.8 保留，2x / x3 / ×2 / 3倍 / 倍率2 排除。
+    // 收紧倍率正则：仅匹配明确倍率写法（2x / 2.5× / ×2 / 3倍 / 倍率2），
+    // 避免把 HK-x2、JP-x3 这类字母编号误判为高倍率；0.5x / 1.5x 等低倍率节点保留。
     const infoNodeFilter = /剩余|流量|到期|官网|群组|重置|套餐|过期|失联|测试/;
     const multiplierPatterns = [
-      /(\d+(?:\.\d+)?)(?:x(?![a-z])|×|倍)/gi,
-      /(?:^|[^a-z0-9])[x×](\d+(?:\.\d+)?)(?![a-z])/gi,
+      /(?:^|[^\d.])(\d+(?:\.\d+)?)\s*(?:x(?![a-z])|×|倍)/gi,
+      /×\s*(\d+(?:\.\d+)?)/g,
       /倍率\s*[:：]?\s*(\d+(?:\.\d+)?)/g
     ];
     const isHighMultiplier = name => multiplierPatterns.some(pattern =>
@@ -204,11 +250,12 @@ function main(config) {
     // 若极端情况下全部被过滤，则回退使用全部节点
     const basePoolForAuto = validProxyNames.length > 0 ? validProxyNames : currentProxyNames;
 
-    // 修复右边界字符类：由 [\s_\-(\[] 修正为 [\s_\-)\]]，确保 [US]、(HK) 等命名正常匹配。
+    // 地区正则：右边界兼容 ) 和 ]，确保 [US]、(HK)、[TW] 等括号命名正常匹配。
     const regionGroups = [
       { key: "US", name: "🇺🇸 US", filter: /(?:^|[\s_\-(\[])(US|USA|SJC|LAX|SEA)(?:$|[\s_\-)\]])|United[ _-]?States|America|美国|美國|洛杉矶|硅谷|西雅图|圣何塞|芝加哥|达拉斯|🇺🇸/i },
       { key: "JP", name: "🇯🇵 JP", filter: /(?:^|[\s_\-(\[])(JP|JPN|NRT|KIX)(?:$|[\s_\-)\]])|Japan|Tokyo|Osaka|日本|东京|大阪|名古屋|埼玉|🇯🇵/i },
       { key: "SG", name: "🇸🇬 SG", filter: /(?:^|[\s_\-(\[])(SG|SGP|SIN)(?:$|[\s_\-)\]])|Singapore|新加坡|狮城|🇸🇬/i },
+      { key: "TW", name: "🇹🇼 TW", filter: /(?:^|[\s_\-(\[])(TW|TWN|TPE)(?:$|[\s_\-)\]])|Taiwan|Taipei|台湾|臺灣|台北|高雄|台中|新北|彰化|🇹🇼/i },
       { key: "HK", name: "🇭🇰 HK", filter: /(?:^|[\s_\-(\[])(HK|HKG)(?:$|[\s_\-)\]])|Hong[ _-]?Kong|香港|港岛|九龙|新界|深港|沪港|广港|🇭🇰/i }
     ];
 
@@ -244,6 +291,7 @@ function main(config) {
       US: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/United_States.png",
       JP: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Japan.png",
       SG: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Singapore.png",
+      TW: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Taiwan.png",
       HK: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Hong_Kong.png",
       AI: "https://raw.githubusercontent.com/laiquziru/share/refs/heads/main/chatgpt.png",
       TG: "https://fastly.jsdelivr.net/gh/Koolson/Qure/IconSet/Color/Telegram.png"
@@ -314,8 +362,8 @@ function main(config) {
       }
     }
 
-    // 只保留 HK 相关手动/自动组；US/JP/SG 不再额外创建手动组
-    ["US", "JP", "SG"].forEach(key => {
+    // 只保留 HK 相关手动/自动组；US/JP/SG/TW 不再额外创建手动组
+    ["US", "JP", "SG", "TW"].forEach(key => {
       const matched = regionalNodes[key];
       if (!matched) return;
       fixed["proxy-groups"].push(Object.assign({
@@ -327,18 +375,14 @@ function main(config) {
       }, healthCheck));
     });
 
-    // 仅检测 HTTPS 连通性，顺序为 US -> SG -> JP (排除 HK 避免触发 AI 地区封锁)。
-    // 仅在订阅中完全没有 US/SG/JP 节点时，才回退到 AUTO，避免有可用非港地区时误回退到香港。
+    // 仅检测 HTTPS 连通性，顺序为 US -> SG -> JP -> TW (排除 HK 避免触发 AI 地区封锁)。
+    // 仅在订阅中完全没有 US/SG/JP/TW 节点时，才回退到 AUTO。
     const aiFallbackProxies = [];
-    if (regionalNodes.US) {
-      aiFallbackProxies.push(autoByKey.US);
-    }
-    if (regionalNodes.SG) {
-      aiFallbackProxies.push(autoByKey.SG);
-    }
-    if (regionalNodes.JP) {
-      aiFallbackProxies.push(autoByKey.JP);
-    }
+    ["US", "SG", "JP", "TW"].forEach(key => {
+      if (regionalNodes[key]) {
+        aiFallbackProxies.push(autoByKey[key]);
+      }
+    });
     if (aiFallbackProxies.length === 0) {
       aiFallbackProxies.push("AUTO");
     }
@@ -419,6 +463,11 @@ function main(config) {
       // 2. 广告域名与国内应用内置 HTTPDNS 拦截前置
       "GEOSITE,category-ads-all,REJECT",
       "GEOSITE,category-httpdns-cn,REJECT",
+
+      // 2.5 按需屏蔽 YouTube QUIC (UDP 443)，强制回落 TCP 提升移动端视频稳定性
+      ...(TRAFFIC_OPTIONS.blockYoutubeQuic
+        ? ["AND,((NETWORK,UDP),(DST-PORT,443),(GEOSITE,youtube)),REJECT"]
+        : []),
 
       // 3. 国外 AI -> 连通性 Fallback 组
       "GEOSITE," + aiGeosite + ",🤖 AI",
