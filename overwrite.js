@@ -1,23 +1,24 @@
 /*
- * 配置说明 (2026-11-24 完善优化版):
- * 1. 使用 rule 模式、fake-ip、geodata-mode、sniffer 域名嗅探和 lazy 测速。
+ * 配置说明 (2026-11-24 境内出差增强版):
+ * 1. 使用 rule 模式、fake-ip、geodata-mode、sniffer 域名嗅探和 lazy 测速；
+ *    自动测速容差默认放宽至 120ms，减少高铁/酒店弱网环境下的频繁切节点断流。
  * 2. 使用 GEOSITE 与 GEOIP 数据分类；自定义 direct.list / proxy.list 规则集
  *    指向本仓库 (laiquziru/share)，默认直连 GitHub Raw 并走 PROXY（支持可选镜像前缀），
  *    置于广告规则之前 (direct 优先于 proxy)。
  * 3. GFW、Instagram、Google、GitHub、X、YouTube、Netflix、Spotify、TikTok
  *    以及非中国学术站点走 PROXY；国外 AI 服务走 AI 连通性故障转移组 (US/SG/JP/TW，排除 HK)。
- *    默认屏蔽 YouTube 的 QUIC (UDP 443) 强制回落 TCP，可通过顶部 QUIC 开关控制。
- * 4. Telegram 域名与 IP 交由「📱 Telegram」组选择 DIRECT 或 PROXY，策略与 DNS 代理
- *    行为可在顶部 TELEGRAM 配置块统一调整。
- * 5. 广告与国内 HTTPDNS 规则前置 REJECT；局域网和私有地址使用 GEOSITE/GEOIP private 直连。
- * 6. 国内流量通过 GEOSITE/GEOIP cn 保底直连；「🐟 漏网之鱼」首次默认 DIRECT，之后记忆选择。
- * 7. 代理类域名 (含 proxy.list) 需要真实解析时使用 #PROXY 远端 DoH；私有域名使用系统 DNS。
- * 8. 自动测速组过滤掉信息提示类节点与 ≥2 倍率节点 (0.5x、1.5x 等低倍率节点保留；
- *    收紧倍率正则避免误伤 HK-x2 类编号)；支持 US/JP/SG/TW/HK 五区识别并修复括号右边界。
+ *    默认屏蔽 YouTube 的 QUIC (UDP 443) 强制回落 TCP，可通过顶部开关控制。
+ * 4. 适配境内出差默认策略：「📱 Telegram」与「🐟 漏网之鱼」首次默认走 PROXY，
+ *    之后由 store-selected 记忆选择；顶部 POLICY_DEFAULTS 可一键切回 DIRECT。
+ * 5. 广告与国内 HTTPDNS 规则前置 REJECT；局域网、私有地址与 Captive Portal 探测域名
+ *    (如 captive.apple.com) 直连并跳过 Fake-IP，确保酒店/机场 Wi-Fi 认证页正常弹出。
+ * 6. 国内流量通过 push.apple.com、GEOSITE apple-cn/cn 与 GEOIP cn 保底直连。
+ * 7. 国内 DoH 采用 IP 形式 (223.5.5.5 / 1.12.12.12) 并以 system DNS 兜底，避免酒店/企业
+ *    Wi-Fi 拦截外部 53 端口导致解析失败；代理类域名使用 #PROXY 远端 DoH。
+ * 8. 自动测速组过滤信息提示类节点与 ≥2 倍率节点 (0.5x、1.5x 保留；收紧正则避免误伤
+ *    HK-x2 类编号)；支持 US/JP/SG/TW/HK 五区识别并修复括号右边界。
  * 9. Tailscale (见下方 TAILSCALE 开关)：新增 Tailscale-Local 节点与 TAILNET 组，
- *    ts.net 与 100.64.0.0/10 规则置于最前；+.ts.net 的 DNS 策略也置于最前，
- *    因为 geosite:private 包含 ts.net，否则会被 system DNS 抢先解析失败。
- *    节点不要加 dialer-proxy，会导致 magicsock 绑定 UDP 失败。
+ *    ts.net 与 100.64.0.0/10 规则置于最前；+.ts.net 的 DNS 策略也置于最前。
  *    已移除公开仓库中硬编码的个人 Tailnet hosts，请按需在本地私有配置中填写 TAILSCALE.hosts。
  * 10. 日志固定 warning；Tailscale 需要重新登录时，临时改成 info 才能在日志里看到登录链接。
  */
@@ -33,13 +34,16 @@ const TAILSCALE = {
   hosts: {}
 };
 
-// Telegram 默认策略与 DNS 行为：
-// - defaultTarget: 首次默认选 "DIRECT" 或 "PROXY"（之后由 store-selected 记忆）
-// - dnsViaProxy: true 时 geosite:telegram 走 #PROXY 远端 DoH 防污染；
-//   若在可直连 Telegram 的海外/专线环境下希望完全不依赖 PROXY，可设为 false。
-const TELEGRAM = {
-  defaultTarget: "DIRECT",
-  dnsViaProxy: true
+// 策略默认值与测速参数（适配中国境内出差场景；出境漫游时可按需改回 "DIRECT"）：
+// - telegramDefault: 「📱 Telegram」首次默认出口 ("PROXY" 或 "DIRECT")
+// - telegramDnsViaProxy: true 时 geosite:telegram 走 #PROXY 远端 DoH 防污染
+// - finalDefault: 「🐟 漏网之鱼」首次默认出口 ("PROXY" 或 "DIRECT")
+// - autoTolerance: url-test 切换容差 (ms)，120ms 可减少高铁/弱网下的抖动断流
+const POLICY_DEFAULTS = {
+  telegramDefault: "PROXY",
+  telegramDnsViaProxy: true,
+  finalDefault: "PROXY",
+  autoTolerance: 120
 };
 
 // 域名嗅探与 QUIC 控制：
@@ -134,9 +138,10 @@ function main(config) {
       "netflix", "spotify", "tiktok", "category-scholar-!cn", "gfw"
     ];
 
+    // 使用 IP 形式的国内 DoH，避免酒店/企业 Wi-Fi 封禁外部 53 端口时无法解析 DoH 域名本身。
     const domesticDns = [
-      "https://dns.alidns.com/dns-query",
-      "https://doh.pub/dns-query"
+      "https://223.5.5.5/dns-query",
+      "https://1.12.12.12/dns-query"
     ];
     const remoteDns = [
       "https://1.1.1.1/dns-query#PROXY",
@@ -149,15 +154,20 @@ function main(config) {
 
     const nameserverPolicy = {
       "geosite:private": ["system"],
+      // 酒店/机场 Wi-Fi 认证页探测域名走系统 DNS，以便本地网关劫持弹出登录页。
+      "captive.apple.com": ["system"],
+      "+.captive.apple.com": ["system"],
       "rule-set:direct": domesticDns.slice(),
       "rule-set:proxy": remoteDns.slice(),
       ["geosite:" + aiGeosite]: aiRemoteDns.slice(),
-      "geosite:telegram": TELEGRAM.dnsViaProxy ? remoteDns.slice() : domesticDns.slice()
+      "geosite:telegram": POLICY_DEFAULTS.telegramDnsViaProxy ? remoteDns.slice() : domesticDns.slice()
     };
     // 与业务规则共用分类，避免新增代理服务却遗漏 DNS 分流。
     proxyGeosites.forEach(site => {
       nameserverPolicy["geosite:" + site] = remoteDns.slice();
     });
+    nameserverPolicy["+.push.apple.com"] = domesticDns.slice();
+    nameserverPolicy["geosite:apple-cn"] = domesticDns.slice();
     nameserverPolicy["geosite:cn"] = domesticDns.slice();
 
     // -----------------------------------------------------------------
@@ -175,11 +185,17 @@ function main(config) {
       "fake-ip-filter": [
         "geosite:private",
         "*.lan", "*.local", "*.localdomain", "*.localhost", "*.home.arpa",
-        "time.*.com", "ntp.*.com", "+.msftconnecttest.com", "+.msftncsi.com",
+        "time.*.com", "ntp.*.com",
+        // Captive Portal 探测域名：放行 iOS/Android/Windows 酒店与机场 Wi-Fi 认证页
+        "captive.apple.com", "+.captive.apple.com",
+        "connectivitycheck.gstatic.com", "connectivitycheck.platform.hicloud.com",
+        "connect.rom.miui.com",
+        "+.msftconnecttest.com", "+.msftncsi.com",
         "localhost.ptlogin2.qq.com", "+.stun.*.*", "+.stun.*.*.*",
         "+.srv.nintendo.net", "+.stun.playstation.net"
       ],
-      "default-nameserver": ["223.5.5.5", "119.29.29.29"],
+      // system 置前兼容拦截外部 53 端口的企业/酒店 Wi-Fi，公网 DNS 作为兜底。
+      "default-nameserver": ["system", "223.5.5.5", "119.29.29.29"],
       nameserver: domesticDns.slice(),
       "proxy-server-nameserver": domesticDns.slice(),
       "direct-nameserver": domesticDns.slice(),
@@ -192,7 +208,7 @@ function main(config) {
     // 节点域名固定使用独立的国内 DNS，不继承可能引用旧规则集或代理的策略。
     delete fixed.dns["proxy-server-nameserver-policy"];
 
-    // Mihomo 域名嗅探：跳过局域网、私有地址、Apple 推送与 Tailscale 域名，避免干扰内网服务。
+    // Mihomo 域名嗅探：跳过局域网、私有地址、Apple 推送、Captive Portal 与 Tailscale 域名。
     if (TRAFFIC_OPTIONS.snifferEnabled) {
       fixed.sniffer = {
         enable: true,
@@ -211,6 +227,8 @@ function main(config) {
         "skip-domain": [
           "Mijia Cloud",
           "+.push.apple.com",
+          "captive.apple.com",
+          "+.captive.apple.com",
           "+.ts.net",
           "+.lan",
           "+.local",
@@ -338,7 +356,7 @@ function main(config) {
       name: "AUTO",
       type: "url-test",
       icon: groupIcon.AUTO,
-      tolerance: 50,
+      tolerance: POLICY_DEFAULTS.autoTolerance,
       proxies: autoPool.slice()
     }, healthCheck));
 
@@ -356,7 +374,7 @@ function main(config) {
           name: autoByKey.HK,
           type: "url-test",
           icon: groupIcon.HK,
-          tolerance: 50,
+          tolerance: POLICY_DEFAULTS.autoTolerance,
           proxies: regionalNodes.HK.slice()
         }, healthCheck));
       }
@@ -370,7 +388,7 @@ function main(config) {
         name: autoByKey[key],
         type: "url-test",
         icon: groupIcon[key],
-        tolerance: 50,
+        tolerance: POLICY_DEFAULTS.autoTolerance,
         proxies: matched.slice()
       }, healthCheck));
     });
@@ -395,7 +413,7 @@ function main(config) {
     }, aiHealthCheck));
 
     // Telegram 独立开关；PROXY 跟随主代理组，选择会被 profile 记忆。
-    const telegramTargets = TELEGRAM.defaultTarget === "PROXY"
+    const telegramTargets = POLICY_DEFAULTS.telegramDefault === "PROXY"
       ? ["PROXY", "DIRECT"]
       : ["DIRECT", "PROXY"];
     fixed["proxy-groups"].push({
@@ -405,12 +423,15 @@ function main(config) {
       proxies: telegramTargets
     });
 
-    // 首次默认 DIRECT；store-selected 会保留用户之后的选择。
+    // 漏网之鱼：首次默认由 POLICY_DEFAULTS.finalDefault 决定；store-selected 会保留后续选择。
+    const finalTargets = POLICY_DEFAULTS.finalDefault === "PROXY"
+      ? ["PROXY", "DIRECT", "AUTO", ...autoNames]
+      : ["DIRECT", "PROXY", "AUTO", ...autoNames];
     fixed["proxy-groups"].push({
       name: "🐟 漏网之鱼",
       type: "select",
       icon: groupIcon.FINAL,
-      proxies: ["DIRECT", "PROXY", "AUTO", ...autoNames]
+      proxies: finalTargets
     });
 
     // -----------------------------------------------------------------
@@ -452,9 +473,10 @@ function main(config) {
     // 5. 分流规则 (内置 GEOSITE/GEOIP + share 仓库自定义规则集)
     // -----------------------------------------------------------------
     fixed.rules = [
-      // 1. 局域网与私有域名/IP 直连
+      // 1. 局域网、私有域名/IP 与 Captive Portal 探测域名直连
       "GEOSITE,private,DIRECT",
       "GEOIP,private,DIRECT,no-resolve",
+      "DOMAIN,captive.apple.com,DIRECT",
 
       // 1.5 自定义规则集 (direct 优先于 proxy，置于广告拦截之前以便处理误杀)
       "RULE-SET,direct,DIRECT",
@@ -484,11 +506,14 @@ function main(config) {
       "GEOIP,netflix,PROXY,no-resolve",
       "GEOIP,twitter,PROXY,no-resolve",
 
-      // 7. 国内域名与 IP 保底直连 (移除 GEOIP,cn 的 no-resolve，确保未收录的国内冷门域名能通过解析 IP 精准直连)
+      // 7. Apple 国内服务、推送及国内域名/IP 保底直连
+      //    (移除 GEOIP,cn 的 no-resolve，确保未收录的国内冷门域名能通过解析 IP 精准直连)
+      "DOMAIN-SUFFIX,push.apple.com,DIRECT",
+      "GEOSITE,apple-cn,DIRECT",
       "GEOSITE,cn,DIRECT",
       "GEOIP,cn,DIRECT",
 
-      // 8. 最终未匹配流量 -> 交由「🐟 漏网之鱼」策略组决定 (默认 DIRECT)
+      // 8. 最终未匹配流量 -> 交由「🐟 漏网之鱼」策略组决定
       "MATCH,🐟 漏网之鱼"
     ];
 
